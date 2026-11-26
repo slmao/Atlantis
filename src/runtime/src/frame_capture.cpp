@@ -35,9 +35,12 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
+#include <filesystem>
 #include <optional>
 #include <cstring>
 #include <span>
+#include <unordered_set>
 #include <vector>
 
 namespace atlantis::runtime {
@@ -46,6 +49,19 @@ namespace connection = atlantis::connection;
 using atlantis::renderer::DrawItem;
 
 namespace detail {
+
+struct RenderLookResources {
+  std::unique_ptr<rhi::Buffer> camera;
+  std::unique_ptr<rhi::Buffer> shadowSpace;
+  std::unique_ptr<rhi::ShadowMap> shadow;
+  std::unique_ptr<rhi::Texture> depth;
+  std::unique_ptr<rhi::HdrColorTarget> hdr;
+  std::optional<renderer::BloomTargets> bloom;
+  std::array<std::unique_ptr<rhi::Pipeline>, renderer::kBloomPipelineCount> bloomPipelines;
+  std::unique_ptr<rhi::Buffer> readback;
+  std::unique_ptr<rhi::OffscreenTarget> output;
+  std::unique_ptr<rhi::RenderTarget> target;
+};
 
 connection::FrameData toFrameData(const FrameLightingData& lighting, const CameraMatrices& camera,
                                   std::size_t drawItemCount, float exposureCompensationEv) {
@@ -105,6 +121,240 @@ std::optional<std::vector<std::uint8_t>> encodeCapturePng(
 }
 
 }  // namespace detail
+
+namespace {
+
+constexpr rhi::Extent2D kLookExtent{connection::kRenderLookCaptureWidth, connection::kRenderLookCaptureHeight};
+constexpr std::size_t kLookBytes = static_cast<std::size_t>(kLookExtent.width) * kLookExtent.height * 4;
+
+bool recordLookReadback(rhi::CommandList& commands, rhi::RenderTarget& target, rhi::Buffer& readback) {
+  render_graph::RenderGraphBuilder graph;
+  const auto image = graph.declareResource("look-output");
+  const auto copy = graph.declarePass("look-readback");
+  graph.writes(copy, image, rhi::ResourceState::TransferSource);
+  graph.setExecute(copy, [&](rhi::CommandList& cmd) { cmd.copyRenderTargetToBuffer(target, readback); });
+  const auto compiled = graph.compile();
+  if (compiled.isErr()) return false;
+  const std::vector bindings{render_graph::ResourceBinding{
+      .resource = compiled.value().resourceAt(0), .target = &target,
+      .incomingState = rhi::ResourceState::TransferSource, .finalState = std::nullopt}};
+  render_graph::execute(compiled.value(), bindings, commands);
+  return commands.recordingValid();
+}
+
+std::FILE* openFresh(const std::string& path) {
+#if defined(_WIN32)
+  std::FILE* file = nullptr;
+  return fopen_s(&file, path.c_str(), "wbx") == 0 ? file : nullptr;
+#else
+  return std::fopen(path.c_str(), "wbx");
+#endif
+}
+
+bool saveLookPair(const std::array<std::string, 2>& paths,
+                  const std::array<std::vector<std::uint8_t>, 2>& pngs) {
+  std::FILE* first = openFresh(paths[0]);
+  if (first == nullptr) return false;
+  std::FILE* second = openFresh(paths[1]);
+  const bool opened = second != nullptr;
+  bool written = opened;
+  if (opened) {
+    written = std::fwrite(pngs[0].data(), 1, pngs[0].size(), first) == pngs[0].size() &&
+              std::fwrite(pngs[1].data(), 1, pngs[1].size(), second) == pngs[1].size();
+    if (std::fclose(second) != 0) written = false;
+  }
+  if (std::fclose(first) != 0) written = false;
+  if (!written) {
+    std::error_code ignored;
+    std::filesystem::remove(paths[0], ignored);
+    if (opened) std::filesystem::remove(paths[1], ignored);
+  }
+  return written;
+}
+
+void writeLookUniforms(detail::RenderLookResources& scratch, const CameraMatrices& camera,
+                       const FrameLightingData& lights, const ActiveCameraInput& input,
+                       const std::array<float, 36>* irradiance) {
+  auto* data = static_cast<std::byte*>(scratch.camera->mappedData());
+  const auto position = extractCameraWorldPosition(input.worldMatrix);
+  std::memcpy(data, &camera, sizeof(camera));
+  std::memcpy(data + kCameraUniformLightingOffsetBytes, &lights, sizeof(lights));
+  std::memcpy(data + kCameraUniformWorldPositionOffsetBytes, &position, sizeof(position));
+  auto* sh = reinterpret_cast<float*>(data + kCameraUniformIrradianceShOffsetBytes);
+  writeEnvironmentIrradianceSh(std::span<float, 36>(sh, 36), irradiance);
+  CameraMatrices shadow{identityMatrix(), identityMatrix()};
+  if (lights.directionalLightCount != 0) {
+    const auto& dir = lights.directionalLights[0].direction;
+    shadow = computeShadowLightSpaceMatrices(Vec3{dir[0], dir[1], dir[2]});
+  }
+  std::memcpy(data + kCameraUniformLightSpaceOffsetBytes, &shadow, sizeof(shadow));
+  std::memcpy(scratch.shadowSpace->mappedData(), &shadow, sizeof(shadow));
+  const auto fog = extractFogData(input.camera.fog);
+  const auto clusters = buildClusterLightData(lights, camera);
+  std::memcpy(data + kCameraUniformFogOffsetBytes, &fog, sizeof(fog));
+  std::memcpy(data + kCameraUniformClusterOffsetBytes, &clusters, sizeof(clusters));
+}
+
+}  // namespace
+
+connection::RenderLookCaptureResult RuntimeApplication::captureRenderLook(
+    const connection::RenderLookCaptureRequest& request,
+    const std::array<asset_system::ValidatedSceneData, 2>& looks, const BootstrapConfig& config) {
+  using E = connection::RenderLookCaptureError;
+  using R = connection::RenderLookCaptureResult;
+  if (lifecycle_.state() != RuntimeLifecycleState::Running || !device_ || !lastSeenFormat_ || environmentData_)
+    return R::Err(E::Unavailable);
+  if (incompleteRenderLook_) return R::Err(E::Busy);
+  if (request.generation != sceneGeneration()) return R::Err(E::StaleProjection);
+  if (request.paths[0].empty() || request.paths[1].empty() || request.paths[0] == request.paths[1] ||
+      std::ranges::any_of(request.paths, [](const std::string& path) {
+        return path.size() > 2048 || path.find('\0') != std::string::npos || !std::filesystem::path(path).is_absolute();
+      })) return R::Err(E::InvalidRequest);
+  for (const auto& path : request.paths) {
+    std::error_code ec;
+    if (std::filesystem::exists(path, ec) || ec) return R::Err(E::InvalidRequest);
+  }
+  auto& output = isSrgbFormat(*lastSeenFormat_) ? outputTransformSrgbPipeline_ : outputTransformUnormPipeline_;
+  if (!output || !shadowCastPipeline_ || !shadowMapSampler_ || !fallbackMaterial_)
+    return R::Err(E::Unavailable);
+  const auto camera = extractCameraMatrices(request.camera.worldMatrix, request.camera.fovYRadians,
+                                             request.camera.nearZ, request.camera.farZ, 16.0f / 9.0f);
+  if (camera.isErr()) return R::Err(E::InvalidRequest);
+
+  struct Variant {
+    ActiveCameraInput camera;
+    FrameLightingData lighting;
+    std::vector<DrawItem> items;
+    std::vector<rhi::Pipeline*> pipelines;
+  };
+  std::array<Variant, 2> variants{};
+  bool wantsBloom = false;
+  for (std::size_t i = 0; i < variants.size(); ++i) {
+    auto baked = world::bakeScene(looks[i]);
+    const auto active = collectActiveCamera(baked);
+    const auto lighting = extractFrameLightingData(collectLights(baked));
+    if (!active || lighting.isErr()) return R::Err(E::InvalidRequest);
+    const auto renderables = collectRenderables(baked);
+    for (const auto& item : renderables) {
+      if (!meshResourceMap_.contains(item.renderable.meshAsset) ||
+          (item.renderable.materialAsset && !materialResourceMap_.contains(*item.renderable.materialAsset)))
+        return R::Err(E::Unavailable);
+    }
+    auto& variant = variants[i];
+    variant.camera = *active;
+    variant.camera.worldMatrix = request.camera.worldMatrix;
+    variant.lighting = lighting.value();
+    variant.items = assembleCaptureDrawItems(renderables);
+    wantsBloom |= active->camera.bloom.strength > 0.0f;
+  }
+
+  auto scratch = std::make_shared<detail::RenderLookResources>();
+  if (wantsBloom && !bloomPipelines_.front()) {
+    auto localPipelines = createRenderLookBloomPipelines(config);
+    if (!localPipelines) return R::Err(E::Unavailable);
+    scratch->bloomPipelines = std::move(*localPipelines);
+  }
+  const auto& bloomPipelines = scratch->bloomPipelines.front() ? scratch->bloomPipelines : bloomPipelines_;
+  for (auto& variant : variants) {
+    std::unordered_set<rhi::Pipeline*> distinct;
+    const auto add = [&](rhi::Pipeline* p) {
+      if (p && distinct.insert(p).second) variant.pipelines.push_back(p);
+    };
+    add(output.get());
+    add(shadowCastPipeline_.get());
+    add(skyPipeline_.get());
+    for (const auto& item : variant.items) add(&item.material->pipeline());
+    if (variant.camera.camera.bloom.strength > 0.0f)
+      for (const auto& p : bloomPipelines) add(p.get());
+    const auto checked = device_->checkIsolatedBindings(variant.pipelines);
+    if (checked.isErr())
+      return R::Err(checked.error() == rhi::CommandListCreateError::IsolatedBindingBudgetExceeded
+                        ? E::BudgetExceeded : E::CaptureFailed);
+  }
+  if (device_->waitIdle().isErr()) {
+    lifecycle_.markFailed();
+    return R::Err(E::CaptureFailed);
+  }
+  auto uniform = device_->createBuffer({.purpose = rhi::BufferPurpose::Uniform, .sizeBytes = kCameraUniformBufferSizeBytes});
+  auto shadowUniform = device_->createBuffer({.purpose = rhi::BufferPurpose::Uniform, .sizeBytes = sizeof(CameraMatrices)});
+  auto shadow = device_->createShadowMap({.extent = {1024, 1024}});
+  auto depth = device_->createTexture({.extent = kLookExtent, .format = rhi::DepthFormat::D32Sfloat});
+  auto hdr = device_->createHdrColorTarget({.extent = kLookExtent});
+  auto readback = device_->createBuffer({.purpose = rhi::BufferPurpose::Readback, .sizeBytes = kLookBytes});
+  auto target = device_->createOffscreenTarget({.extent = kLookExtent, .format = *lastSeenFormat_});
+  if (uniform.isErr() || shadowUniform.isErr() || shadow.isErr() || depth.isErr() || hdr.isErr() ||
+      readback.isErr() || target.isErr()) return R::Err(E::CaptureFailed);
+  scratch->camera = std::move(uniform.value());
+  scratch->shadowSpace = std::move(shadowUniform.value());
+  scratch->shadow = std::move(shadow.value());
+  scratch->depth = std::move(depth.value());
+  scratch->hdr = std::move(hdr.value());
+  scratch->readback = std::move(readback.value());
+  scratch->output = std::move(target.value());
+  if (wantsBloom) {
+    auto bloom = renderer::createBloomTargets(*device_, kLookExtent);
+    if (bloom.isErr()) return R::Err(E::CaptureFailed);
+    scratch->bloom.emplace(std::move(bloom.value()));
+  }
+  auto borrow = scratch->output->acquireTarget();
+  if (borrow.isErr()) return R::Err(E::CaptureFailed);
+  scratch->target = std::move(borrow.value());
+
+  std::optional<renderer::EnvironmentLighting> environment;
+  if (environmentLightingResources_) environment.emplace(environmentLightingResources_->borrowedView());
+  connection::RenderLookCapturedPair result{request.document, request.apply, request.generation,
+      request.basis.activeCamera, {}, {}, request.looks};
+  std::array<std::vector<std::uint8_t>, 2> pngs;
+  for (std::size_t i = 0; i < variants.size(); ++i) {
+    const auto& variant = variants[i];
+    const auto& active = variant.camera;
+    writeLookUniforms(*scratch, camera.value(), variant.lighting, active,
+        environmentLightingResources_ ? &environmentLightingResources_->irradianceSh : nullptr);
+    auto commands = device_->createIsolatedCommandList(variant.pipelines);
+    if (commands.isErr()) return R::Err(E::CaptureFailed);
+    std::optional<renderer::BloomInput> bloom;
+    if (active.camera.bloom.strength > 0.0f) {
+      bloom.emplace(renderer::BloomInput{.targets = *scratch->bloom,
+          .strength = active.camera.bloom.strength, .threshold = active.camera.bloom.threshold});
+      for (std::size_t p = 0; p < bloomPipelines.size(); ++p) bloom->pipelines[p] = bloomPipelines[p].get();
+    }
+    const auto position = extractCameraWorldPosition(active.worldMatrix);
+    const auto casters = variant.lighting.directionalLightCount == 0 ? std::span<const DrawItem>{} : std::span(variant.items);
+    renderer_.drawFrame(*commands.value(), *scratch->target, *scratch->depth, *scratch->camera, variant.items,
+        rhi::ResourceState::TransferSource, *scratch->hdr, *fullscreenTriangleVertexBuffer_,
+        *fullscreenTriangleIndexBuffer_, *output, *outputTransformSampler_, active.camera.exposureCompensationEv,
+        environment ? &*environment : nullptr, skyPipeline_.get(), *scratch->shadow,
+        *shadowMapSampler_, *shadowCastPipeline_, *scratch->shadowSpace, casters,
+        std::array{position.x, position.y, position.z}, bloom ? &*bloom : nullptr);
+    if (!recordLookReadback(*commands.value(), *scratch->target, *scratch->readback))
+      return R::Err(E::CaptureFailed);
+    const auto submitted = device_->submit(std::move(commands.value()), *scratch->target);
+    if (submitted.isErr()) {
+      if (submitted.error() == rhi::SubmitError::DeviceLost) lifecycle_.markFailed();
+      return R::Err(E::CaptureFailed);
+    }
+    if (device_->waitIdle().isErr()) {
+      incompleteRenderLook_ = std::move(scratch);
+      lifecycle_.markFailed();
+      return R::Err(E::CaptureFailed);
+    }
+    const auto* pixels = static_cast<const std::uint8_t*>(scratch->readback->mappedData());
+    std::vector<std::uint8_t> rgba(pixels, pixels + kLookBytes);
+    const bool bgra = *lastSeenFormat_ == rhi::Format::Bgra8Srgb || *lastSeenFormat_ == rhi::Format::Bgra8Unorm;
+    for (std::size_t p = 0; p < rgba.size(); p += 4) {
+      if (bgra) std::swap(rgba[p], rgba[p + 2]);
+      rgba[p + 3] = 255;
+    }
+    auto png = detail::encodeCapturePng(kLookExtent.width, kLookExtent.height, rgba, kLookBytes * 2);
+    if (!png) return R::Err(E::CaptureFailed);
+    pngs[i] = std::move(*png);
+    result.frames[i] = detail::toFrameData(variant.lighting, camera.value(), variant.items.size(),
+                                           active.camera.exposureCompensationEv);
+    result.images[i] = {request.paths[i], kLookExtent.width, kLookExtent.height};
+  }
+  if (!saveLookPair(request.paths, pngs)) return R::Err(E::CaptureFailed);
+  return R::Ok(std::move(result));
+}
 
 // Plan 0055 P8: the DrawItems runFrame() hands drawFrame() -- the same
 // resolution, in the same order, against the same resources -- rebuilt

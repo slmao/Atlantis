@@ -89,6 +89,8 @@ class RuntimeControlHost final : public atlantis::connection::RuntimeControl {
         std::optional<atlantis::connection::ViewportPolicy>)> setViewportVisibility{};
     std::function<atlantis::connection::ViewportPickResult(atlantis::connection::ViewportStamp,
         atlantis::connection::ViewportPickKind, std::span<const atlantis::connection::Ray>)> pickViewport{};
+    std::function<atlantis::connection::RenderLookCaptureResult(
+        const atlantis::connection::RenderLookCaptureRequest&)> captureRenderLook{};
   };
   [[nodiscard]] static Target forApplication(RuntimeApplication& application);
 
@@ -118,6 +120,8 @@ class RuntimeControlHost final : public atlantis::connection::RuntimeControl {
                 done) override;
   atlantis::connection::DiagnosticBatch diagnostics(std::uint64_t afterSequence, std::size_t max) override;
   void setViewportCamera(std::optional<atlantis::connection::ViewportCamera> camera) override;
+  [[nodiscard]] atlantis::connection::RenderLookCaptureResult captureRenderLook(
+      const atlantis::connection::RenderLookCaptureRequest& request) override;
   [[nodiscard]] atlantis::connection::ViewportVisibilityResult viewportVisibility() override;
   [[nodiscard]] atlantis::connection::ViewportVisibilityResult setViewportVisibility(
       atlantis::connection::ViewportStamp stamp, std::optional<atlantis::connection::ViewportPolicy> policy) override;

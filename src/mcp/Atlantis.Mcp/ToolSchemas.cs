@@ -26,6 +26,10 @@ internal static class ToolSchemas
 
     internal static readonly JsonNode WorldAddress = Object(("entity", String), ("component", String), ("field", String));
     internal static readonly JsonNode SceneAddress = Object(("node", String), ("component", String), ("field", String));
+    private static readonly JsonNode RenderLookGuard = Command("RequireRenderLookDocument",
+        ("expectedDocument", Object(("documentId", String), ("documentRevision", Integer))),
+        ("activeCamera", String), ("lightRoster", Array(String)), ("placementSignature", String));
+    private static readonly JsonNode RenderLookWrite = Command("SetProperty", ("address", SceneAddress), ("value", Value));
     internal static readonly JsonNode WorldCommand = Choice(
         Command("CreateEntity", ("entity", String)), Command("DestroyEntity", ("entity", String)),
         Command("AddComponent", ("entity", String), ("component", String)),
@@ -46,6 +50,7 @@ internal static class ToolSchemas
         Command("RequireTransformBatchRevision", ("expectedRevision", Integer)),
         Command("RequireDuplicateBatchRevision", ("expectedRevision", Integer)),
         Command("RequireNameBatchDocument", ("expectedDocument", Object(("documentId", String), ("documentRevision", Integer)))),
+        RenderLookGuard,
         Command("SetActiveCamera", ("camera", Nullable(String))),
         Command("SetNodeName", ("node", String), ("name", String)),
         Command("SetPrefabOrigin", ("node", String), ("prefab", String)));
@@ -66,6 +71,8 @@ internal static class ToolSchemas
     };
     internal static readonly JsonNode Camera = Object(("worldMatrix", Vector(Float, 16)),
         ("fovYRadians", Float), ("nearZ", Float), ("farZ", Float));
+    internal static JsonElement RenderLookCapture() => Parameters(("guard", RenderLookGuard), ("applyId", String),
+        ("generation", Integer), ("camera", Camera), ("looks", Vector(Array(RenderLookWrite), 2)), ("outputs", Vector(String, 2)));
     private static readonly JsonNode Depth = Enum("Tested", "OnTop");
     private static readonly JsonNode Segment = Object(("a", Vector(Number, 3)), ("b", Vector(Number, 3)),
         ("color", Vector(Number, 4)), ("depth", Depth), ("width", Number));

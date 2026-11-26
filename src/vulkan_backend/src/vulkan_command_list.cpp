@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <utility>
 
 #include "resource_state_mapping.h"
 #include "vulkan_buffer.h"
@@ -57,7 +58,17 @@ VulkanCommandList::VulkanCommandList(VkDevice device, VkCommandPool commandPool,
       debugUtils_(debugUtils),
       profiling_(profiling) {}
 
-VulkanCommandList::~VulkanCommandList() { vkFreeCommandBuffers(device_, commandPool_, 1, &commandBuffer_); }
+VulkanCommandList::~VulkanCommandList() {
+  vkFreeCommandBuffers(device_, commandPool_, 1, &commandBuffer_);
+  if (isolated()) vkDestroyDescriptorPool(device_, isolatedPool_, nullptr);
+}
+
+void VulkanCommandList::takeIsolatedBindings(VkDescriptorPool pool, IsolatedSets sets) {
+  ATLANTIS_CHECK(!isolated() && pool != VK_NULL_HANDLE);
+  profiling_ = {};
+  isolatedPool_ = pool;
+  isolatedSets_ = std::move(sets);
+}
 
 void VulkanCommandList::beginRegion(std::string_view name) {
 #if defined(ATLANTIS_GPU_MARKERS)
@@ -426,12 +437,92 @@ void VulkanCommandList::endRendering() {
 
 void VulkanCommandList::bindPipeline(atlantis::rhi::Pipeline& pipeline) {
   auto& vulkanPipeline = static_cast<VulkanPipeline&>(pipeline);
+  auto descriptor = vulkanPipeline.descriptorSet();
+  if (isolated()) {
+    const auto it = isolatedSets_.find(vulkanPipeline.vkPipeline());
+    if (it == isolatedSets_.end()) {
+      recordingValid_ = false;
+      isolatedSet_ = nullptr;
+      return;
+    }
+    isolatedSet_ = &it->second;
+    descriptor = isolatedSet_->descriptor;
+  } else if (descriptor == VK_NULL_HANDLE) {
+    recordingValid_ = false;
+    return;
+  }
   vkCmdBindPipeline(commandBuffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, vulkanPipeline.vkPipeline());
   ATL_PROFILE_ADD("pipeline_binds", 1);
   boundPipelineLayout_ = vulkanPipeline.pipelineLayout();
-  boundDescriptorSet_ = vulkanPipeline.descriptorSet();
+  boundDescriptorSet_ = descriptor;
   boundSampledTextureFirstBinding_ = vulkanPipeline.sampledTextureFirstBinding();
   boundSampledTextureBindingCount_ = vulkanPipeline.sampledTextureBindingCount();
+}
+
+void VulkanCommandList::setIsolatedUniform(VkBuffer buffer) {
+  if (!recordingValid_) return;
+  if (isolatedSet_ == nullptr || boundSampledTextureFirstBinding_ != 1) {
+    recordingValid_ = false;
+    return;
+  }
+  if (isolatedSet_->uniform == buffer) return;
+  if (isolatedSet_->sealed) {
+    recordingValid_ = false;
+    return;
+  }
+  const VkDescriptorBufferInfo info{buffer, 0, VK_WHOLE_SIZE};
+  VkWriteDescriptorSet write{};
+  write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  write.dstSet = isolatedSet_->descriptor;
+  write.descriptorCount = 1;
+  write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+  write.pBufferInfo = &info;
+  vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+  isolatedSet_->uniform = buffer;
+}
+
+void VulkanCommandList::setIsolatedImage(std::uint32_t binding, const VkDescriptorImageInfo& image) {
+  if (!recordingValid_) return;
+  if (isolatedSet_ == nullptr || !isSampledTextureBindingInRange(
+      boundSampledTextureFirstBinding_, boundSampledTextureBindingCount_, binding)) {
+    recordingValid_ = false;
+    return;
+  }
+  auto& previous = isolatedSet_->images[binding - boundSampledTextureFirstBinding_];
+  if (previous.imageView == image.imageView && previous.sampler == image.sampler &&
+      previous.imageLayout == image.imageLayout) return;
+  if (isolatedSet_->sealed) {
+    recordingValid_ = false;
+    return;
+  }
+  VkWriteDescriptorSet write{};
+  write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  write.dstSet = isolatedSet_->descriptor;
+  write.dstBinding = binding;
+  write.descriptorCount = 1;
+  write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  write.pImageInfo = &image;
+  vkUpdateDescriptorSets(device_, 1, &write, 0, nullptr);
+  previous = image;
+}
+
+bool VulkanCommandList::bindIsolatedDrawSet() {
+  if (!recordingValid_) return false;
+  if (!isolated()) return true;
+  if (isolatedSet_ == nullptr || (boundSampledTextureFirstBinding_ == 1 && isolatedSet_->uniform == VK_NULL_HANDLE)) {
+    recordingValid_ = false;
+    return false;
+  }
+  for (std::uint32_t i = 0; i < boundSampledTextureBindingCount_; ++i) {
+    if (isolatedSet_->images[i].imageView == VK_NULL_HANDLE) {
+      recordingValid_ = false;
+      return false;
+    }
+  }
+  vkCmdBindDescriptorSets(commandBuffer_, VK_PIPELINE_BIND_POINT_GRAPHICS, boundPipelineLayout_, 0, 1,
+                          &isolatedSet_->descriptor, 0, nullptr);
+  isolatedSet_->sealed = true;
+  return true;
 }
 
 void VulkanCommandList::bindVertexBuffer(atlantis::rhi::Buffer& buffer) {
@@ -467,10 +558,15 @@ void VulkanCommandList::bindIndexBuffer(atlantis::rhi::Buffer& buffer) {
 }
 
 void VulkanCommandList::bindUniformBuffer(atlantis::rhi::Buffer& buffer) {
+  if (!recordingValid_) return;
   ATLANTIS_CHECK(buffer.purpose() == atlantis::rhi::BufferPurpose::Uniform);
   ATLANTIS_CHECK(boundDescriptorSet_ != VK_NULL_HANDLE);
   auto& vulkanBuffer = static_cast<VulkanBuffer&>(buffer);
   const VkBuffer vkBuffer = vulkanBuffer.vkBuffer();
+  if (isolated()) {
+    setIsolatedUniform(vkBuffer);
+    return;
+  }
 
   // See this class's own header comment on uniformBufferMemo_ for why
   // this call is skipped, and only this call, when it would be an exact
@@ -510,6 +606,7 @@ void VulkanCommandList::bindUniformBuffer(atlantis::rhi::Buffer& buffer) {
 
 void VulkanCommandList::bindTexture(std::uint32_t binding, const atlantis::rhi::SampledTexture& texture,
                                      const atlantis::rhi::Sampler& sampler) {
+  if (!recordingValid_) return;
   ATLANTIS_CHECK(boundDescriptorSet_ != VK_NULL_HANDLE);
   ATLANTIS_CHECK(isSampledTextureBindingInRange(boundSampledTextureFirstBinding_,
                                                 boundSampledTextureBindingCount_, binding));
@@ -525,6 +622,10 @@ void VulkanCommandList::bindTexture(std::uint32_t binding, const atlantis::rhi::
   // VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL (ResourceState::ShaderRead)
   // when this is called -- see resource_state_mapping.h's own note.
   imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  if (isolated()) {
+    setIsolatedImage(binding, imageInfo);
+    return;
+  }
 
   // Same redundant-write memo as bindUniformBuffer() above, and for the
   // same reason and the same 2026-09-14 fix (this class's own header
@@ -573,6 +674,7 @@ void VulkanCommandList::bindTexture(std::uint32_t binding, const atlantis::rhi::
 // MaterialKind contract), matching outputTransformExpectedDescriptorContract().
 void VulkanCommandList::bindTexture(std::uint32_t binding, const atlantis::rhi::HdrColorTarget& texture,
                                      const atlantis::rhi::Sampler& sampler) {
+  if (!recordingValid_) return;
   ATLANTIS_CHECK(boundDescriptorSet_ != VK_NULL_HANDLE);
   ATLANTIS_CHECK(isSampledTextureBindingInRange(boundSampledTextureFirstBinding_,
                                                 boundSampledTextureBindingCount_, binding));
@@ -587,6 +689,10 @@ void VulkanCommandList::bindTexture(std::uint32_t binding, const atlantis::rhi::
   // VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL (ResourceState::ShaderRead)
   // when this is called.
   imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  if (isolated()) {
+    setIsolatedImage(binding, imageInfo);
+    return;
+  }
 
   VkWriteDescriptorSet write{};
   write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -611,6 +717,7 @@ void VulkanCommandList::bindTexture(std::uint32_t binding, const atlantis::rhi::
 // base-color sampler already has.
 void VulkanCommandList::bindTexture(std::uint32_t binding, const atlantis::rhi::ShadowMap& texture,
                                      const atlantis::rhi::Sampler& sampler) {
+  if (!recordingValid_) return;
   ATLANTIS_CHECK(boundDescriptorSet_ != VK_NULL_HANDLE);
   ATLANTIS_CHECK(isSampledTextureBindingInRange(boundSampledTextureFirstBinding_,
                                                 boundSampledTextureBindingCount_, binding));
@@ -626,6 +733,10 @@ void VulkanCommandList::bindTexture(std::uint32_t binding, const atlantis::rhi::
   // VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL (ResourceState::ShaderRead)
   // when this is called.
   imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  if (isolated()) {
+    setIsolatedImage(binding, imageInfo);
+    return;
+  }
 
   // Same redundant-write memo as bindTexture(SampledTexture&, ...)
   // above, and for the same reason and the same 2026-09-14 fix -- a
@@ -658,6 +769,7 @@ void VulkanCommandList::bindTexture(std::uint32_t binding, const atlantis::rhi::
 }
 
 void VulkanCommandList::pushConstant(const void* data, std::size_t sizeBytes) {
+  if (!recordingValid_) return;
   ATLANTIS_CHECK(boundPipelineLayout_ != VK_NULL_HANDLE);
   // Plan 0023 Milestone 3 (ADR-0067 D-4): matches this Pipeline's own
   // widened VkPushConstantRange::stageFlags (vulkan_device.cpp) --
@@ -670,6 +782,7 @@ void VulkanCommandList::pushConstant(const void* data, std::size_t sizeBytes) {
 }
 
 void VulkanCommandList::drawIndexed(std::uint32_t indexCount) {
+  if (!bindIsolatedDrawSet()) return;
   vkCmdDrawIndexed(commandBuffer_, indexCount, 1, 0, 0, 0);
   ATL_PROFILE_ADD("draw_calls", 1);
   ATL_PROFILE_ADD("triangles", indexCount / 3);
@@ -678,6 +791,7 @@ void VulkanCommandList::drawIndexed(std::uint32_t indexCount) {
 // Plan 0056 P4 (ADR-0108 D3, J2): the ranged draw. drawIndexed(indexCount)
 // above is this with firstIndex = 0, vertexOffset = 0.
 void VulkanCommandList::drawIndexed(std::uint32_t indexCount, std::uint32_t firstIndex, std::int32_t vertexOffset) {
+  if (!bindIsolatedDrawSet()) return;
   vkCmdDrawIndexed(commandBuffer_, indexCount, 1, firstIndex, vertexOffset, 0);
   ATL_PROFILE_ADD("draw_calls", 1);
   ATL_PROFILE_ADD("triangles", indexCount / 3);
@@ -704,6 +818,7 @@ void VulkanCommandList::setScissor(atlantis::rhi::Rect2D rect) {
 // without SAMPLED usage is a programmer error.
 void VulkanCommandList::bindTexture(std::uint32_t binding, const atlantis::rhi::RenderTarget& sampledTarget,
                                      const atlantis::rhi::Sampler& sampler) {
+  if (!recordingValid_) return;
   ATLANTIS_CHECK(boundDescriptorSet_ != VK_NULL_HANDLE);
   ATLANTIS_CHECK(isSampledTextureBindingInRange(boundSampledTextureFirstBinding_,
                                                 boundSampledTextureBindingCount_, binding));
@@ -719,6 +834,10 @@ void VulkanCommandList::bindTexture(std::uint32_t binding, const atlantis::rhi::
   // Precondition, not re-checked here: the target is in
   // VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL (ResourceState::ShaderRead).
   imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  if (isolated()) {
+    setIsolatedImage(binding, imageInfo);
+    return;
+  }
 
   VkWriteDescriptorSet write{};
   write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;

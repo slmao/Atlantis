@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <limits>
 #include <optional>
 #include <random>
@@ -1598,6 +1599,72 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
     return reply;
   }
 
+  if (t.size() >= 2 && t[0] == "runtime" && t[1] == "capture-look") {
+    const std::string command = "runtime capture-look";
+    const auto malformed = [&] { return failed(command, usageError("runtime capture-look <manifest>")); };
+    if (t.size() != 3) return malformed();
+    if (control_ == nullptr || !control_->status().supportsRenderLookCapture)
+      return failed(command, plainError("Unsupported", ErrorCategory::Refused, "render look capture is unavailable"));
+    std::ifstream file(std::string(t[2]), std::ios::binary | std::ios::ate);
+    const auto size = file.tellg();
+    if (!file || size <= 0 || size > 512 * 1024) return malformed();
+    file.seekg(0);
+    std::string row;
+    std::uint64_t unusedEnd = 0;
+    if (!std::getline(file, row)) return malformed();
+    auto guardCommand = parseSceneWrite(tokenize(row), unusedEnd, row);
+    if (guardCommand.isErr() || guardCommand.value().size() != 1) return malformed();
+    const auto* guard = std::get_if<ac::RequireRenderLookDocument>(&guardCommand.value().front());
+    if (!guard || !std::getline(file, row)) return malformed();
+    const auto basis = tokenize(row);
+    if (basis.size() != 3 || basis[0] != "projection") return malformed();
+    const auto apply = ac::parseApplyId(basis[1]);
+    std::uint64_t generation = 0;
+    const auto parsed = std::from_chars(basis[2].data(), basis[2].data() + basis[2].size(), generation);
+    if (apply.isErr() || parsed.ec != std::errc{} || parsed.ptr != basis[2].data() + basis[2].size() ||
+        !std::getline(file, row)) return malformed();
+    const auto lens = tokenize(row);
+    if (lens.size() != 20 || lens[0] != "camera") return malformed();
+    const auto matrix = parseFloats<16>(lens, 1);
+    const auto limits = parseFloats<3>(lens, 17);
+    if (!matrix || !limits) return malformed();
+
+    connection::RenderLookCaptureRequest request{guard->expectedDocument, apply.value(), generation, guard->basis,
+        {*matrix, (*limits)[0], (*limits)[1], (*limits)[2]}, {}, {}};
+    const auto read = [&] {
+      if (!std::getline(file, row)) return false;
+      if (!row.empty() && row.back() == '\r') row.pop_back();
+      return true;
+    };
+    const std::size_t count = 8 + 3 * request.basis.lightRoster.size();
+    for (std::size_t i = 0; i < request.looks.size(); ++i) {
+      if (!read() || !row.starts_with("output ") || row.size() <= 7) return malformed();
+      request.paths[i] = row.substr(7);
+      for (std::size_t field = 0; field < count; ++field) {
+        if (!read()) return malformed();
+        auto writeCommand = parseSceneWrite(tokenize(row), unusedEnd, row);
+        if (writeCommand.isErr() || writeCommand.value().size() != 1) return malformed();
+        const auto* value = std::get_if<ac::SetProperty>(&writeCommand.value().front());
+        if (!value) return malformed();
+        request.looks[i].push_back(*value);
+      }
+    }
+    if (read()) return malformed();
+    const auto captured = control_->captureRenderLook(request);
+    if (captured.isErr()) {
+      const std::string code(connection::toString(captured.error()));
+      return failed(command, plainError(code, ErrorCategory::Refused, "render look capture refused: " + code));
+    }
+    const auto& pair = captured.value();
+    Value result = Value::object();
+    result.set("applyId", Value::string(ac::toString(pair.apply)));
+    result.set("generation", Value::number(pair.generation));
+    result.set("activeCamera", Value::string(text::formatEntity(pair.activeCamera)));
+    result.set("A", stepJson({0, false, pair.frames[0], pair.images[0]}, true));
+    result.set("B", stepJson({0, false, pair.frames[1], pair.images[1]}, true));
+    return done(command, "Captured A and B.\n", std::move(result));
+  }
+
   // runtime pause | resume | step [--frames <n>] [--capture [<path>]]
   if (t.size() >= 2 && t[0] == "runtime" && (t[1] == "pause" || t[1] == "resume" || t[1] == "step")) {
     const std::string command = "runtime " + std::string(t[1]);
@@ -2467,6 +2534,29 @@ atlantis::Result<std::vector<ac::Command>, CliError> CommandLayer::parseSceneWri
       return ResultT::Err(textError(text::TextError::MalformedNumber, t[2]));
     return ResultT::Ok(std::vector<ac::Command>{ac::RequireNameBatchDocument{{id.value(), revision}}});
   }
+  if (verb == "require-render-look-document") {
+    constexpr std::string_view usage =
+        "require-render-look-document <document> <revision> <camera> <placement-signature> [light-guid ...]";
+    if (t.size() < 5 || t.size() > 5 + ac::kMaxRenderLookLights || t[4].empty() ||
+        t[4].size() > ac::kMaxRenderLookPlacementBytes) return ResultT::Err(usageError(usage));
+    const auto id = entityAt(1);
+    if (id.isErr()) return ResultT::Err(textError(id.error(), t[1]));
+    const auto camera = entityAt(3);
+    if (camera.isErr()) return ResultT::Err(textError(camera.error(), t[3]));
+    std::uint64_t revision{};
+    const auto parsed = std::from_chars(t[2].data(), t[2].data() + t[2].size(), revision);
+    if (parsed.ec != std::errc{} || parsed.ptr != t[2].data() + t[2].size() || revision == 0)
+      return ResultT::Err(textError(text::TextError::MalformedNumber, t[2]));
+    ac::RenderLookBasis basis{camera.value(), {}, std::string(t[4])};
+    for (std::size_t i = 5; i < t.size(); ++i) {
+      const auto light = entityAt(i);
+      if (light.isErr()) return ResultT::Err(textError(light.error(), t[i]));
+      if (light.value() == camera.value() || (!basis.lightRoster.empty() && basis.lightRoster.back() >= light.value()))
+        return ResultT::Err(usageError("light GUIDs must be distinct and in canonical ascending order"));
+      basis.lightRoster.push_back(light.value());
+    }
+    return ResultT::Ok(std::vector<ac::Command>{ac::RequireRenderLookDocument{{id.value(), revision}, std::move(basis)}});
+  }
   if (verb == "require-revision" || verb == "require-transform-revision" || verb == "require-duplicate-revision") {
     if (t.size() != 2) return ResultT::Err(usageError(std::string(verb) + " <revision> (first line of scene tx)"));
     std::uint64_t revision{};
@@ -2551,11 +2641,17 @@ Reply CommandLayer::submitSceneTransaction(std::vector<ac::Command> commands, st
   const bool nameGuard = std::ranges::any_of(commands, [](const auto& edit) {
     return std::holds_alternative<ac::RequireNameBatchDocument>(edit);
   });
-  const bool guarded = propertyGuard || transformGuard || duplicateGuard || nameGuard;
+  const bool renderLookGuard = std::ranges::any_of(commands, [](const auto& edit) {
+    return std::holds_alternative<ac::RequireRenderLookDocument>(edit);
+  });
+  const bool guarded = propertyGuard || transformGuard || duplicateGuard || nameGuard || renderLookGuard;
   Value batchTargets = Value::array();
   std::string batchField;
   if (guarded) {
     const auto info = a->document();
+    if (renderLookGuard && (!info || !info->supportsGuardedRenderLookTransactions))
+      return failed(command, plainError("GuardedRenderLookUnavailable", ErrorCategory::Refused,
+                                        "the open document does not support guarded render look transactions"));
     if (nameGuard && (!info || !info->supportsGuardedNameTransactions))
       return failed(command, plainError("GuardedNameBatchUnavailable", ErrorCategory::Refused,
                                         "the open document does not support guarded name transactions"));
@@ -2590,6 +2686,7 @@ Reply CommandLayer::submitSceneTransaction(std::vector<ac::Command> commands, st
       if (const auto leaf = leafOf(schema, write->address.component, write->address.field)) batchField = leaf->path;
     }
     if (transformGuard) batchField = "Transform";
+    if (renderLookGuard) batchField = "RenderLook";
   }
   (void)drainSceneEvents();  // only this submission's events below
   (void)a->drainFailures();

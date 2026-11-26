@@ -58,6 +58,7 @@ namespace atlantis::runtime {
 
 namespace detail {
 struct MeshPreviewResources;
+struct RenderLookResources;
 struct PickInstance;
 using PreviewCompletion = atlantis::Result<std::monostate, rhi::SubmitError> (*)(rhi::Device&);
 }
@@ -183,6 +184,9 @@ class RuntimeApplication {
   [[nodiscard]] atlantis::Result<atlantis::connection::CapturedImage, atlantis::connection::ControlError>
   captureImage(const std::string& path,
                const std::optional<atlantis::connection::ViewportOverlay>& overlay = std::nullopt);
+  [[nodiscard]] connection::RenderLookCaptureResult captureRenderLook(
+      const connection::RenderLookCaptureRequest& request,
+      const std::array<asset_system::ValidatedSceneData, 2>& looks, const BootstrapConfig& config);
 
   // Plan 0062 P3 (Spec 0062 R3; ADR-0123 D1, D3): between frames, the scene's
   // active camera -- its world matrix and Camera component, as the frame reads
@@ -288,6 +292,8 @@ class RuntimeApplication {
   void detachOverlay();
 
  private:
+  using RenderLookBloomPipelines = std::array<std::unique_ptr<rhi::Pipeline>, renderer::kBloomPipelineCount>;
+  [[nodiscard]] std::optional<RenderLookBloomPipelines> createRenderLookBloomPipelines(const BootstrapConfig& config);
   [[nodiscard]] std::vector<detail::PickInstance> pickInstances(bool alignment, bool useVisibility = false) const;
   [[nodiscard]] connection::assets::MeshPreviewResult previewMeshWithCompletion(
       const BootstrapConfig& config, const asset_system::AssetGuid& guid, const asset_system::StaticMeshAssetData& mesh,
@@ -375,6 +381,7 @@ class RuntimeApplication {
   // Normally empty; a preview with unconfirmed GPU completion keeps its
   // resources through the terminal shutdown drain, before Device teardown.
   std::shared_ptr<detail::MeshPreviewResources> incompleteMeshPreview_;
+  std::shared_ptr<detail::RenderLookResources> incompleteRenderLook_;
   std::unique_ptr<atlantis::rhi::Presentation> presentation_;  // lazy: constructed on first SurfaceCreated
   // Plan 0025/M7: declared before borrowing Materials so reverse destruction
   // releases all Materials first, then environment resources, then Device.

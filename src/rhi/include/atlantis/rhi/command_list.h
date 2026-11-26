@@ -31,6 +31,8 @@ namespace atlantis::rhi {
 // submitted. Not copyable, not thread-safe.
 class CommandList {
  public:
+  // An isolated recording with an undeclared or changed binding cannot submit.
+  [[nodiscard]] virtual bool recordingValid() const noexcept { return true; }
   virtual ~CommandList() = default;
 
   virtual void transitionResource(RenderTarget& target, ResourceState before, ResourceState after) = 0;

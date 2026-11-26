@@ -1,9 +1,9 @@
 # ADR 0192: Render Look Capture Descriptor Ownership
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-26
 - **Deciders:** Atlantis maintainer
-- **Acceptance:** Pending joint review
+- **Acceptance:** [Joint approval of 56207a64](https://github.com/slmao/Atlantis/pull/456#issuecomment-7196813749)
 - **Related Spec:** [Spec 0146](../specs/0146-render-look-capture-descriptors.md)
 - **Supplements:** [ADR-0191](0191-render-look-preview-and-adoption.md), decision 2
 

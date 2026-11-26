@@ -1090,6 +1090,7 @@ Value encode(const connection::RuntimeStatus& status) {
   out.set("frame", Value::number(status.frame));
   out.set("scene", encodeAsset(status.scene));
   out.set("sceneGeneration", Value::number(status.sceneGeneration));  // Plan 0065 P4 (ADR-0131 D5)
+  if (status.supportsRenderLookCapture) out.set("supportsRenderLookCapture", Value::boolean(true));
   return out;
 }
 
@@ -1108,7 +1109,128 @@ std::optional<connection::RuntimeStatus> decodeStatus(const Value& value) {
     if (!decoded) return std::nullopt;
     generation = *decoded;
   }
-  return connection::RuntimeStatus{paused->asBool(), *f, *s, generation};
+  const auto* renderLook = value.find("supportsRenderLookCapture");
+  return connection::RuntimeStatus{paused->asBool(), *f, *s, generation,
+                                   renderLook && renderLook->isBool() && renderLook->asBool()};
+}
+
+Value encode(const connection::RenderLookCaptureRequest& request) {
+  Value out = Value::object();
+  out.set("guard", encode(authoring::Command(authoring::RequireRenderLookDocument{request.document, request.basis})));
+  out.set("applyId", Value::string(authoring::toString(request.apply)));
+  out.set("generation", Value::number(request.generation));
+  out.set("camera", encode(request.camera));
+  Value looks = Value::array();
+  Value outputs = Value::array();
+  for (std::size_t i = 0; i < request.looks.size(); ++i) {
+    Value values = Value::array();
+    for (const auto& write : request.looks[i]) values.push(encode(authoring::Command(write)));
+    looks.push(std::move(values));
+    outputs.push(Value::string(request.paths[i]));
+  }
+  out.set("looks", std::move(looks));
+  out.set("outputs", std::move(outputs));
+  return out;
+}
+
+std::optional<connection::RenderLookCaptureRequest> decodeRenderLookCaptureRequest(const Value& value) {
+  if (!value.isObject() || value.asObject().size() != 6) return std::nullopt;
+  const auto* g = value.find("guard");
+  const auto* a = value.find("applyId");
+  const auto* v = value.find("generation");
+  const auto* c = value.find("camera");
+  const auto* l = value.find("looks");
+  const auto* p = value.find("outputs");
+  if (!g || !a || !a->isString() || !v || !c || !l || !l->isArray() || l->asArray().size() != 2 ||
+      !p || !p->isArray() || p->asArray().size() != 2) return std::nullopt;
+  const auto guardCommand = decodeAuthoringCommand(*g);
+  const auto* guard = guardCommand ? std::get_if<authoring::RequireRenderLookDocument>(&*guardCommand) : nullptr;
+  const auto apply = authoring::parseApplyId(a->asString());
+  const auto generation = decodeUInt64(*v);
+  const auto camera = decodeViewportCamera(*c);
+  if (!guard || apply.isErr() || !generation || !camera) return std::nullopt;
+  connection::RenderLookCaptureRequest request{guard->expectedDocument, apply.value(), *generation,
+                                               guard->basis, *camera, {}, {}};
+  for (std::size_t i = 0; i < 2; ++i) {
+    const auto& values = l->asArray()[i];
+    const auto& path = p->asArray()[i];
+    if (!values.isArray() || values.asArray().size() != 8 + guard->basis.lightRoster.size() * 3 ||
+        !path.isString() || path.asString().empty() || path.asString().size() > 2048)
+      return std::nullopt;
+    for (const auto& item : values.asArray()) {
+      const auto decoded = decodeAuthoringCommand(item);
+      const auto* write = decoded ? std::get_if<authoring::SetProperty>(&*decoded) : nullptr;
+      if (!write) return std::nullopt;
+      request.looks[i].push_back(*write);
+    }
+    request.paths[i] = path.asString();
+  }
+  return request;
+}
+
+Value encode(const connection::RenderLookCapturedPair& pair) {
+  Value out = Value::object();
+  out.set("document", encode(pair.document));
+  out.set("applyId", Value::string(authoring::toString(pair.apply)));
+  out.set("generation", Value::number(pair.generation));
+  out.set("activeCamera", encodeEntity(pair.activeCamera));
+  Value variants = Value::array();
+  for (std::size_t i = 0; i < pair.frames.size(); ++i) {
+    Value entry = Value::object();
+    entry.set("role", Value::string(i == 0 ? "A" : "B"));
+    entry.set("capture", encode(connection::FrameReport{0, false, pair.frames[i], pair.images[i]}));
+    Value values = Value::array();
+    for (const auto& property : pair.looks[i]) values.push(encode(authoring::Command(property)));
+    entry.set("values", std::move(values));
+    variants.push(std::move(entry));
+  }
+  out.set("variants", std::move(variants));
+  return out;
+}
+
+std::optional<connection::RenderLookCapturedPair> decodeRenderLookCapturedPair(
+    const Value& value, const connection::RenderLookCaptureRequest& request) {
+  if (!value.isObject() || value.asObject().size() != 5) return std::nullopt;
+  const auto* document = value.find("document");
+  const auto* id = value.find("applyId");
+  const auto* generation = value.find("generation");
+  const auto* camera = value.find("activeCamera");
+  const auto* variants = value.find("variants");
+  if (!document || decodeDocumentToken(*document) != request.document ||
+      !id || !id->isString() || id->asString() != authoring::toString(request.apply) ||
+      !generation || decodeUInt64(*generation) != request.generation ||
+      !camera || decodeEntity(*camera) != request.basis.activeCamera ||
+      !variants || !variants->isArray() || variants->asArray().size() != 2) return std::nullopt;
+  connection::RenderLookCapturedPair pair{request.document, request.apply, request.generation,
+      request.basis.activeCamera, {}, {}, request.looks};
+  for (std::size_t i = 0; i < 2; ++i) {
+    const auto& variant = variants->asArray()[i];
+    const auto* role = variant.find("role");
+    const auto* capture = variant.find("capture");
+    const auto* values = variant.find("values");
+    if (!variant.isObject() || variant.asObject().size() != 3 || !role || !role->isString() ||
+        role->asString() != (i == 0 ? "A" : "B") || !capture || !values || !values->isArray() ||
+        values->asArray().size() != request.looks[i].size()) return std::nullopt;
+    auto report = decodeFrameReport(*capture);
+    if (!report || report->frame != 0 || report->applied || !report->image ||
+        report->image->path != request.paths[i] || report->image->width != connection::kRenderLookCaptureWidth ||
+        report->image->height != connection::kRenderLookCaptureHeight) return std::nullopt;
+    for (std::size_t j = 0; j < request.looks[i].size(); ++j)
+      if (values->asArray()[j] != encode(authoring::Command(request.looks[i][j]))) return std::nullopt;
+    pair.frames[i] = std::move(report->data);
+    pair.images[i] = std::move(*report->image);
+  }
+  return pair;
+}
+
+std::optional<connection::RenderLookCaptureError> decodeRenderLookCaptureError(const Value& value) {
+  using E = connection::RenderLookCaptureError;
+  if (!value.isString()) return std::nullopt;
+  constexpr std::array errors{E::Unsupported, E::Busy, E::InvalidRequest, E::StaleProjection,
+      E::TargetChanged, E::Unavailable, E::BudgetExceeded, E::CaptureFailed};
+  for (auto e : errors)
+    if (connection::toString(e) == value.asString()) return e;
+  return std::nullopt;
 }
 
 Value encode(const connection::StepRequest& request) {
@@ -1851,6 +1973,8 @@ constexpr std::array kAuthoringErrors = {
     authoring::Error::InvalidGuardedPropertyBatch, authoring::Error::PropertyBatchStaleRevision,
     authoring::Error::InvalidGuardedDuplicateBatch, authoring::Error::DuplicateBatchStaleRevision,
     authoring::Error::InvalidGuardedNameBatch, authoring::Error::NameBatchStaleDocument,
+    authoring::Error::InvalidGuardedRenderLook, authoring::Error::RenderLookStaleDocument,
+    authoring::Error::RenderLookTargetChanged,
 };
 constexpr std::array kOpenErrors = {authoring::OpenError::SourceUnreadable, authoring::OpenError::SourceParseFailed,
                                     authoring::OpenError::SourceInvalid};
@@ -2018,6 +2142,14 @@ Value encode(const authoring::Command& command) {
         } else if constexpr (std::is_same_v<C, authoring::RequireNameBatchDocument>) {
           out.set("kind", Value::string("RequireNameBatchDocument"));
           out.set("expectedDocument", encode(c.expectedDocument));
+        } else if constexpr (std::is_same_v<C, authoring::RequireRenderLookDocument>) {
+          out.set("kind", Value::string("RequireRenderLookDocument"));
+          out.set("expectedDocument", encode(c.expectedDocument));
+          out.set("activeCamera", encodeEntity(c.basis.activeCamera));
+          Value roster = Value::array();
+          for (const auto& light : c.basis.lightRoster) roster.push(encodeEntity(light));
+          out.set("lightRoster", std::move(roster));
+          out.set("placementSignature", Value::string(c.basis.placementSignature));
         } else if constexpr (std::is_same_v<C, authoring::RequireDuplicateBatchRevision>) {
           out.set("kind", Value::string("RequireDuplicateBatchRevision"));
           out.set("expectedRevision", Value::number(c.expectedRevision));
@@ -2129,6 +2261,27 @@ std::optional<authoring::Command> decodeAuthoringCommand(const Value& value) {
       return std::nullopt;
     const auto expected = decodeDocumentToken(*token);
     return expected ? std::optional<authoring::Command>{authoring::RequireNameBatchDocument{*expected}} : std::nullopt;
+  }
+  if (*kind == "RequireRenderLookDocument") {
+    const auto* token = value.find("expectedDocument");
+    const auto* camera = value.find("activeCamera");
+    const auto* roster = value.find("lightRoster");
+    const auto* signature = value.find("placementSignature");
+    if (value.asObject().size() != 5 || !token || !token->isObject() || token->asObject().size() != 2 ||
+        !camera || !roster || !roster->isArray() || roster->asArray().size() > authoring::kMaxRenderLookLights ||
+        !signature || !signature->isString() || signature->asString().empty() ||
+        signature->asString().size() > authoring::kMaxRenderLookPlacementBytes) return std::nullopt;
+    const auto expected = decodeDocumentToken(*token);
+    const auto active = decodeEntity(*camera);
+    if (!expected || !active) return std::nullopt;
+    authoring::RenderLookBasis basis{*active, {}, std::string(signature->asString())};
+    for (const auto& entry : roster->asArray()) {
+      const auto light = decodeEntity(entry);
+      if (!light || *light == *active || (!basis.lightRoster.empty() && basis.lightRoster.back() >= *light))
+        return std::nullopt;
+      basis.lightRoster.push_back(*light);
+    }
+    return authoring::Command(authoring::RequireRenderLookDocument{*expected, std::move(basis)});
   }
   if (*kind == "RequireDuplicateBatchRevision") {
     const auto* revision = value.find("expectedRevision");
@@ -2369,6 +2522,7 @@ Value encode(const authoring::DocumentInfo& document) {
   if (document.supportsGuardedTransformTransactions) out.set("supportsGuardedTransformTransactions", Value::boolean(true));
   if (document.supportsGuardedDuplicateTransactions) out.set("supportsGuardedDuplicateTransactions", Value::boolean(true));
   if (document.supportsGuardedNameTransactions) out.set("supportsGuardedNameTransactions", Value::boolean(true));
+  if (document.supportsGuardedRenderLookTransactions) out.set("supportsGuardedRenderLookTransactions", Value::boolean(true));
   if (document.supportsPrefabOrigin) out.set("supportsPrefabOrigin", Value::boolean(true));
   if (document.supportsPrefabSync) out.set("supportsPrefabSync", Value::boolean(true));
   if (document.supportsPrefabRegistration) out.set("supportsPrefabRegistration", Value::boolean(true));
@@ -2410,6 +2564,9 @@ std::optional<authoring::DocumentInfo> decodeDocumentInfo(const Value& value) {
   const auto* names = value.find("supportsGuardedNameTransactions");
   out.supportsGuardedNameTransactions = out.provenance == authoring::Provenance::HandAuthored &&
                                         names && names->isBool() && names->asBool();
+  const auto* look = value.find("supportsGuardedRenderLookTransactions");
+  out.supportsGuardedRenderLookTransactions = out.provenance == authoring::Provenance::HandAuthored &&
+                                              look && look->isBool() && look->asBool();
   return out;
 }
 

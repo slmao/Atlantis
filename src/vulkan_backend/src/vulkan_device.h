@@ -133,6 +133,10 @@ class VulkanDevice final : public atlantis::rhi::Device {
 
   [[nodiscard]] atlantis::Result<std::unique_ptr<atlantis::rhi::CommandList>, atlantis::rhi::CommandListCreateError>
   createCommandList() override;
+  [[nodiscard]] atlantis::Result<std::monostate, atlantis::rhi::CommandListCreateError>
+  checkIsolatedBindings(std::span<atlantis::rhi::Pipeline* const> pipelines) const override;
+  [[nodiscard]] atlantis::Result<std::unique_ptr<atlantis::rhi::CommandList>, atlantis::rhi::CommandListCreateError>
+  createIsolatedCommandList(std::span<atlantis::rhi::Pipeline* const> pipelines) override;
   [[nodiscard]] atlantis::Result<std::unique_ptr<atlantis::rhi::SubmissionSignal>, atlantis::rhi::SubmitError> submit(
       std::unique_ptr<atlantis::rhi::CommandList> commandList, const atlantis::rhi::RenderTarget& target) override;
   [[nodiscard]] atlantis::Result<std::monostate, atlantis::rhi::SubmitError> waitIdle() override;

@@ -19,6 +19,7 @@ internal static partial class Program
     {
         "create_node", "destroy_node", "set_properties", "add_component", "remove_component",
         "set_parent", "set_active_camera", "world.drain_events", "authoring.drain_events",
+        "control.capture_render_look",
     });
 
     private static (string Tool, string Args, string Commands)[] CompositionCases =>
@@ -41,8 +42,21 @@ internal static partial class Program
 
     private static void CompositionChecks(string repo)
     {
-        Check(ToolRegistry.AllMappings.Length == 97 && ToolRegistry.AllMappings.Select(m => m.Tool.Name).Distinct().Count() == 97,
-            "97 unique approved tools including Prefab revision, update, sync and replay");
+        Check(ToolRegistry.AllMappings.Length == 98 && ToolRegistry.AllMappings.Select(m => m.Tool.Name).Distinct().Count() == 98,
+            "98 unique approved tools including render look capture");
+        FakeSession oldCapture = new() { Response =
+            $$$"""{"result":{"paused":false,"frame":5,"scene":"{{{Entity}}}","sceneGeneration":1}}""" };
+        JsonValue values = JsonValue.NewArray();
+        for (int i = 0; i < 8; i++)
+            values.Push(Json.Parse("""{"kind":"SetProperty","address":""" + SceneAddress + ""","value":{"f32":0}}"""));
+        var lookArguments = JsonValue.NewObject().Set("guard", Json.Parse(
+                $$$"""{"kind":"RequireRenderLookDocument","expectedDocument":{"documentId":"{{{Entity}}}","documentRevision":7},"activeCamera":"{{{Entity}}}","lightRoster":[],"placementSignature":"basis"}"""))
+            .Set("applyId", JsonValue.String(Entity)).Set("generation", JsonValue.Number(1UL))
+            .Set("camera", Json.Parse(Camera)).Set("looks", JsonValue.NewArray().Push(values).Push(values))
+            .Set("outputs", JsonValue.NewArray().Push(JsonValue.String("D:/look-A.png")).Push(JsonValue.String("D:/look-B.png")));
+        var refusedLook = new ToolRegistry(oldCapture).Invoke(Request("control.capture_render_look", Json.Write(lookArguments)));
+        Check(refusedLook.IsError == true && oldCapture.Calls.Single().Method == "control.status",
+            "render look capture discovers old hosts without sending a capture");
         FakeSession oldGroupHost = new() { Response =
             """{"error":{"code":"BadRequest","message":"unknown or malformed asset query"}}""" };
         var groupResult = new ToolRegistry(oldGroupHost).Invoke(Request("assets.static_group", "{\"guid\":\"" + Entity + "\"}"));
@@ -86,15 +100,18 @@ internal static partial class Program
                 : Json.Parse(Json.Write(wire));
             string kind = command.Find("kind")!.AsString;
             if (kind is "SetNodeName" or "SwapAdjacentSiblings" or "MoveSiblingRelative" or "RequireDocumentRevision"
-                or "RequireTransformBatchRevision" or "RequireDuplicateBatchRevision" or "RequireNameBatchDocument")
+                or "RequireTransformBatchRevision" or "RequireDuplicateBatchRevision" or "RequireNameBatchDocument"
+                or "RequireRenderLookDocument")
             {
-                bool guarded = kind is "RequireDocumentRevision" or "RequireTransformBatchRevision" or "RequireDuplicateBatchRevision" or "RequireNameBatchDocument";
+                bool guarded = kind is "RequireDocumentRevision" or "RequireTransformBatchRevision"
+                    or "RequireDuplicateBatchRevision" or "RequireNameBatchDocument" or "RequireRenderLookDocument";
                 QueueSession exact = new()
                 {
                     GuardedCapability = kind == "RequireDocumentRevision" ? JsonValue.Bool(true) : null,
                     TransformCapability = kind == "RequireTransformBatchRevision" ? JsonValue.Bool(true) : null,
                     DuplicateCapability = kind == "RequireDuplicateBatchRevision" ? JsonValue.Bool(true) : null,
                     NameCapability = kind == "RequireNameBatchDocument" ? JsonValue.Bool(true) : null,
+                    RenderLookCapability = kind == "RequireRenderLookDocument" ? JsonValue.Bool(true) : null,
                 };
                 var exactRegistry = new ToolRegistry(exact);
                 exactRegistry.InitializeSubscriptions();
@@ -223,6 +240,23 @@ internal static partial class Program
             bool supported = capability is { Kind: JsonKind.Bool, AsBool: true };
             Check(session.Calls.Count - start == (supported ? 2 : 1) && (submitted.IsError == true) != supported,
                 "Transform capability is discovered independently from the property guard");
+        }
+        const string renderLook = """
+            {"commands":[{"kind":"RequireRenderLookDocument",
+            "expectedDocument":{"documentId":"52052052-0001-4052-8052-000000000001","documentRevision":7},
+            "activeCamera":"52052052-0002-4052-8052-000000000002","lightRoster":[],"placementSignature":"basis"},
+            {"kind":"SetProperty","address":{"node":"52052052-0002-4052-8052-000000000002",
+            "component":"0xb9843e7316ae7a5d","field":"0x955f02d0d0b2003e"},"value":{"f32":4}}]}
+            """;
+        foreach (JsonValue? capability in new[] { null, JsonValue.Bool(false), JsonValue.String("true"), JsonValue.Bool(true) })
+        {
+            session.RenderLookCapability = capability;
+            int start = session.Calls.Count;
+            var submitted = registry.Invoke(Request("authoring.submit_transaction", renderLook));
+            bool supported = capability is { Kind: JsonKind.Bool, AsBool: true };
+            Check(session.Calls[start].Method == "authoring.document" &&
+                session.Calls.Count - start == (supported ? 2 : 1) && (submitted.IsError == true) != supported,
+                "guarded looks are forwarded only on literal true, without write fallback");
         }
         foreach (var c in CompositionCases)
         {
@@ -421,6 +455,7 @@ internal static partial class Program
         public JsonValue? TransformCapability { get; set; }
         public JsonValue? DuplicateCapability { get; set; }
         public JsonValue? NameCapability { get; set; }
+        public JsonValue? RenderLookCapability { get; set; }
         private ulong _ticket = 100;
 
         public Outcome<Assets.MeshPreview, Assets.PreviewError> PreviewMesh(AssetGuid guid) =>
@@ -451,6 +486,8 @@ internal static partial class Program
                     if (TransformCapability is not null) result.Set("supportsGuardedTransformTransactions", TransformCapability);
                     if (DuplicateCapability is not null) result.Set("supportsGuardedDuplicateTransactions", DuplicateCapability);
                     if (NameCapability is not null) result.Set("supportsGuardedNameTransactions", NameCapability);
+                    if (RenderLookCapability is not null)
+                        result.Set("supportsGuardedRenderLookTransactions", RenderLookCapability);
                     break;
                 case "authoring.submitTransaction":
                 {

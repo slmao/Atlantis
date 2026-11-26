@@ -403,7 +403,7 @@ public sealed class AuthoringSession
     public CommandTicket Submit(A.Command command)
     {
         if (command is A.SwapAdjacentSiblings or A.MoveSiblingRelative or A.RequireDocumentRevision or A.RequireTransformBatchRevision
-            or A.RequireDuplicateBatchRevision or A.RequireNameBatchDocument or A.SetPrefabOrigin)
+            or A.RequireDuplicateBatchRevision or A.RequireNameBatchDocument or A.RequireRenderLookDocument or A.SetPrefabOrigin)
             return SubmitTransaction(new[] { command }).First;
         JsonValue result = _session.Call("authoring.submit", JsonValue.NewObject().Set("command", Codec.Encode(command)));
         return Codec.DecodeUInt64(result) is ulong ticket ? new CommandTicket(ticket) : throw _session.Malformed("authoring.submit");
@@ -417,9 +417,12 @@ public sealed class AuthoringSession
         bool duplicate = commands.Any(command => command is A.RequireDuplicateBatchRevision);
         bool prefab = commands.Any(command => command is A.SetPrefabOrigin);
         bool names = commands.Any(command => command is A.RequireNameBatchDocument);
-        if (property || transform || duplicate || prefab || names)
+        bool looks = commands.Any(command => command is A.RequireRenderLookDocument);
+        if (property || transform || duplicate || prefab || names || looks)
         {
             A.DocumentInfo? info = Document();
+            if (looks && info?.SupportsGuardedRenderLookTransactions != true)
+                throw new NotSupportedException("This open document does not support guarded render look transactions.");
             if (names && info?.SupportsGuardedNameTransactions != true)
                 throw new NotSupportedException("This open document does not support guarded name transactions.");
             if (duplicate && info?.SupportsGuardedDuplicateTransactions != true)

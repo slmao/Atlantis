@@ -1,12 +1,12 @@
 # Spec 0146: Isolated Descriptors for Render Look Capture
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-26
 - **Design baseline:** `8bf5fba6` on `main`
 - **Related Plan:** [Plan 0146](../plans/0146-render-look-capture-descriptors.md)
-- **Related ADR:** [ADR-0192](../adr/0192-render-look-capture-descriptor-ownership.md) (Proposed)
-- **Approval:** Pending joint review
+- **Related ADR:** [ADR-0192](../adr/0192-render-look-capture-descriptor-ownership.md) (Accepted)
+- **Approval:** [Joint approval of 56207a64](https://github.com/slmao/Atlantis/pull/456#issuecomment-7196813749)
 
 ## Summary
 

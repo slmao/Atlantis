@@ -70,6 +70,50 @@ template <typename T>
 
 }  // namespace
 
+TEST_CASE("remote codec: guarded render looks round-trip with closed target metadata", "[remote][codec][render-look]") {
+  namespace ac = atlantis::connection::authoring;
+  const ac::RequireRenderLookDocument guard{{entity(1), 7}, {entity(2), {entity(3), entity(4)}, "basis"}};
+  auto jsonGuard = overTheWire(codec::encode(ac::Command{guard}));
+  const auto decoded = codec::decodeAuthoringCommand(jsonGuard);
+  REQUIRE(decoded.has_value());
+  const auto& actual = std::get<ac::RequireRenderLookDocument>(*decoded);
+  CHECK(actual.expectedDocument == guard.expectedDocument);
+  CHECK(actual.basis == guard.basis);
+  auto duplicates = json::Value::array();
+  duplicates.push(codec::encodeEntity(entity(3)));
+  duplicates.push(codec::encodeEntity(entity(3)));
+  jsonGuard.set("lightRoster", std::move(duplicates));
+  CHECK_FALSE(codec::decodeAuthoringCommand(jsonGuard));
+}
+
+TEST_CASE("remote codec: look captures correlate both PNGs and the settled projection", "[remote][codec][render-look]") {
+  namespace c = atlantis::connection;
+  namespace a = c::authoring;
+  const a::RequireRenderLookDocument guard{{entity(1), 7}, {entity(2), {}, "basis"}};
+  c::ViewportCamera camera{{1,0,0,0,0,1,0,0,0,0,1,0,0,0,2,1}, 1.0f, 0.1f, 200.0f};
+  c::RenderLookCaptureRequest request{guard.expectedDocument, a::ApplyId{entity(3).bytes}, 4, guard.basis, camera, {},
+                                      {"D:/left.png", "D:/right.png"}};
+  for (auto& values : request.looks)
+    for (std::uint64_t n = 1; n <= 8; ++n)
+      values.push_back({{entity(2), atlantis::schema::TypeId{1}, atlantis::schema::FieldId{n}}, 1.0f});
+  const auto wire = overTheWire(codec::encode(request));
+  const auto decoded = codec::decodeRenderLookCaptureRequest(wire);
+  REQUIRE(decoded.has_value());
+  CHECK(codec::encode(*decoded) == wire);
+  c::FrameData data;
+  data.view = camera.worldMatrix;
+  data.projection = camera.worldMatrix;
+  data.exposureCompensationEv = 1.0f;
+  c::RenderLookCapturedPair pair{request.document, request.apply, request.generation, guard.basis.activeCamera,
+      {data, data}, {{{request.paths[0], 960, 540}, {request.paths[1], 960, 540}}}, request.looks};
+  auto answer = overTheWire(codec::encode(pair));
+  CHECK(codec::decodeRenderLookCapturedPair(answer, request).has_value());
+  pair.images[0].path = request.paths[1];
+  CHECK_FALSE(codec::decodeRenderLookCapturedPair(codec::encode(pair), request));
+  answer.set("generation", json::Value::number(std::uint64_t{5}));
+  CHECK_FALSE(codec::decodeRenderLookCapturedPair(answer, request));
+}
+
 TEST_CASE("codec: every PropertyValue alternative round-trips", "[remote][codec]") {
   const std::vector<access::PropertyValue> values = {
       access::PropertyValue(std::uint64_t{0}),

@@ -115,6 +115,13 @@ public static partial class Codec
                 output.Set("kind", JsonValue.String("RequireNameBatchDocument"))
                     .Set("expectedDocument", Encode(c.ExpectedDocument));
                 break;
+            case A.RequireRenderLookDocument c:
+                var roster = JsonValue.NewArray();
+                foreach (var light in c.Basis.LightRoster) roster.Push(Encode(light));
+                output.Set("kind", JsonValue.String("RequireRenderLookDocument"))
+                    .Set("expectedDocument", Encode(c.ExpectedDocument)).Set("activeCamera", Encode(c.Basis.ActiveCamera))
+                    .Set("lightRoster", roster).Set("placementSignature", JsonValue.String(c.Basis.PlacementSignature));
+                break;
             case A.RequireDuplicateBatchRevision c:
                 output.Set("kind", JsonValue.String("RequireDuplicateBatchRevision"))
                     .Set("expectedRevision", JsonValue.Number(c.ExpectedRevision));
@@ -205,6 +212,29 @@ public static partial class Codec
             case "RequireNameBatchDocument":
                 return Exact(value, 2) && value.Find("expectedDocument") is { } nameDocument && Exact(nameDocument, 2) &&
                     DecodeDocumentToken(nameDocument) is { } token ? new A.RequireNameBatchDocument(token) : null;
+            case "RequireRenderLookDocument":
+            {
+                if (!Exact(value, 5) || value.Find("expectedDocument") is not { } lookDocument ||
+                    !Exact(lookDocument, 2) || DecodeDocumentToken(lookDocument) is not { } expected ||
+                    value.Find("activeCamera") is not { } active || DecodeEntity(active) is not EntityGuid camera ||
+                    value.Find("lightRoster") is not { Kind: JsonKind.Array } roster ||
+                    roster.Items.Count > A.RequireRenderLookDocument.MaxLights ||
+                    value.Find("placementSignature") is not { IsString: true } signature ||
+                    signature.AsString.Length == 0 ||
+                    System.Text.Encoding.UTF8.GetByteCount(signature.AsString) > A.RequireRenderLookDocument.MaxPlacementBytes)
+                    return null;
+                List<EntityGuid> lights = new(roster.Items.Count);
+                string? previous = null;
+                foreach (var entry in roster.Items)
+                {
+                    if (DecodeEntity(entry) is not EntityGuid light || light == camera) return null;
+                    string id = light.ToString();
+                    if (previous is not null && string.CompareOrdinal(previous, id) >= 0) return null;
+                    lights.Add(light);
+                    previous = id;
+                }
+                return new A.RequireRenderLookDocument(expected, new A.RenderLookBasis(camera, lights, signature.AsString));
+            }
             case "RequireDuplicateBatchRevision":
                 return value.Find("expectedRevision") is JsonValue duplicateGuard && DecodeUInt64(duplicateGuard) is ulong duplicateRevision
                     ? new A.RequireDuplicateBatchRevision(duplicateRevision) : null;
@@ -402,6 +432,8 @@ public static partial class Codec
         if (document.SupportsGuardedDuplicateTransactions)
             result.Set("supportsGuardedDuplicateTransactions", JsonValue.Bool(true));
         if (document.SupportsGuardedNameTransactions) result.Set("supportsGuardedNameTransactions", JsonValue.Bool(true));
+        if (document.SupportsGuardedRenderLookTransactions)
+            result.Set("supportsGuardedRenderLookTransactions", JsonValue.Bool(true));
         if (document.SupportsPrefabOrigin) result.Set("supportsPrefabOrigin", JsonValue.Bool(true));
         if (document.SupportsPrefabSync) result.Set("supportsPrefabSync", JsonValue.Bool(true));
         if (document.SupportsPrefabRegistration) result.Set("supportsPrefabRegistration", JsonValue.Bool(true));
@@ -432,6 +464,8 @@ public static partial class Codec
                 value.Find("supportsGuardedDuplicateTransactions") is { Kind: JsonKind.Bool, AsBool: true },
             SupportsGuardedNameTransactions = p == A.Provenance.HandAuthored &&
                 value.Find("supportsGuardedNameTransactions") is { Kind: JsonKind.Bool, AsBool: true },
+            SupportsGuardedRenderLookTransactions = p == A.Provenance.HandAuthored &&
+                value.Find("supportsGuardedRenderLookTransactions") is { Kind: JsonKind.Bool, AsBool: true },
             SupportsPrefabOrigin = value.Find("supportsPrefabOrigin") is { Kind: JsonKind.Bool, AsBool: true },
             SupportsPrefabSync = value.Find("supportsPrefabSync") is { Kind: JsonKind.Bool, AsBool: true },
             SupportsPrefabRegistration = value.Find("supportsPrefabRegistration") is { Kind: JsonKind.Bool, AsBool: true }

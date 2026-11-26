@@ -1471,6 +1471,55 @@ TEST_CASE("authoring: a guarded name batch matches its document token and writes
   CHECK_FALSE(refusalOf(*incoming, {one}));
 }
 
+TEST_CASE("authoring: adopting a render look validates the basis and commits a mixed diff atomically",
+          "[authoring][session][render-look]") {
+  Fixture f;
+  auto& writer = *f.connection;
+  auto other = f.session.connect();
+  REQUIRE(writer.document()->supportsGuardedRenderLookTransactions);
+  const auto subscription = other->subscribe({});
+  const auto initial = f.document();
+  const auto start = writer.documentState().value()->token;
+  const auto basis = ac::RenderLookBasis{entity(1), {entity(3)},
+      as::toString(entity(1)) + "//C/0/1065353216/1084227584/1065353216/1065353216/1065353216/0/0/0/"
+      "1065353216/1056964608/1115684864|" + as::toString(entity(3)) +
+      "//P/0/0/0/1065353216/1065353216/1065353216/0/0/0|"};
+  using E = ac::Error;
+  const ac::RequireRenderLookDocument guard{start, basis};
+  const ac::SetProperty exposure{address(kCameraNode, kCamera, field("Camera", "exposureCompensationEv")), 2.0f};
+  const ac::SetProperty intensity{address(kLightNode, kLight, field("Light", "intensity")), 3.0f};
+  const ac::SetProperty position{address(kLightNode, kTransform, field("Transform", "localPosition")),
+                                 std::array{1.0f, 2.0f, 3.0f}};
+  CHECK(refusalOf(writer, {guard}) == E::InvalidGuardedRenderLook);
+  CHECK(refusalOf(writer, {exposure, guard, intensity}) == E::InvalidGuardedRenderLook);
+  CHECK(refusalOf(writer, {guard, exposure, exposure}) == E::InvalidGuardedRenderLook);
+  CHECK(refusalOf(writer, {guard, exposure, position}) == E::InvalidGuardedRenderLook);
+  CHECK(refusalOf(writer, {guard, ac::SetProperty{exposure.address, 1.5f}}) == E::InvalidGuardedRenderLook);
+  CHECK(refusalOf(writer, {guard, exposure, ac::SetProperty{intensity.address, -1.0f}}) == E::FieldOutOfDomain);
+  auto wrongRoster = guard;
+  wrongRoster.basis.lightRoster.clear();
+  CHECK(refusalOf(writer, {wrongRoster, exposure}) == E::RenderLookTargetChanged);
+  CHECK(writer.documentState().value()->token == start);
+  CHECK(f.document() == initial);
+  CHECK(drain(*other, subscription).empty());
+
+  const auto issued = writer.submitTransaction({guard, exposure, intensity});
+  CHECK(issued.count == 3);
+  REQUIRE(writer.drainFailures().empty());
+  const auto adopted = writer.documentState().value()->token;
+  CHECK(adopted.documentRevision == start.documentRevision + 1);
+  CHECK(drain(*other, subscription) == std::vector<ac::Event>{
+      ac::PropertyChanged{exposure.address, exposure.value}, ac::PropertyChanged{intensity.address, intensity.value}});
+  CHECK(writer.getProperty(exposure.address).value() == exposure.value);
+  CHECK(writer.getProperty(intensity.address).value() == intensity.value);
+  CHECK(refusalOf(writer, {guard, exposure}) == E::RenderLookStaleDocument);
+
+  REQUIRE_FALSE(refusalOf(*other, {position}));
+  const auto moved = writer.documentState().value()->token;
+  CHECK(refusalOf(writer, {ac::RequireRenderLookDocument{moved, basis}, exposure}) == E::RenderLookTargetChanged);
+  CHECK(writer.documentState().value()->token == moved);
+}
+
 TEST_CASE("authoring: guarded name batches admit 64 distinct writes and reject 65",
           "[authoring][session][name]") {
   Fixture f;

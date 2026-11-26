@@ -32,8 +32,10 @@ VulkanPipeline::~VulkanPipeline() {
   // vkFreeDescriptorSets is documented to only ever return VK_SUCCESS --
   // checked anyway, per this module's own "every VkResult is checked"
   // rule with no silent exceptions.
-  const VkResult freeResult = vkFreeDescriptorSets(device_, descriptorPool_, 1, &descriptorSet_);
-  ATLANTIS_CHECK(freeResult == VK_SUCCESS);
+  if (descriptorSet_ != VK_NULL_HANDLE) {
+    const VkResult freeResult = vkFreeDescriptorSets(device_, descriptorPool_, 1, &descriptorSet_);
+    ATLANTIS_CHECK(freeResult == VK_SUCCESS);
+  }
 
   vkDestroyDescriptorSetLayout(device_, descriptorSetLayout_, nullptr);
   vkDestroyPipelineLayout(device_, pipelineLayout_, nullptr);

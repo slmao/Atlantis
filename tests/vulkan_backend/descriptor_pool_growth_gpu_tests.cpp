@@ -613,3 +613,44 @@ TEST_CASE("VulkanDevice's own destruction destroys every pool across at least 2 
   // can pass at all (a leaked/double-destroyed pool would be caught by
   // Validation Layers; a hung drain would time out the whole suite).
 }
+
+TEST_CASE("The isolated capture pool admits 320 distinct pipelines and settles before reuse",
+          "[vulkan_backend][gpu][isolated-bindings]") {
+  using namespace atlantis;
+  auto device = vulkan_backend::createDevice({.applicationName = "Isolated capture budget", .enableValidationLayers = true});
+  REQUIRE(device.isOk());
+  const auto vertex = loadSpirvFile("shaders/minimal_mesh.vert.spv");
+  const auto fragment = loadSpirvFile("shaders/minimal_mesh.frag.spv");
+  const auto reflected = loadReflectionMetadata("shaders/minimal_mesh.vert.refl.json");
+  REQUIRE(vertex);
+  REQUIRE(fragment);
+  REQUIRE(reflected.isOk());
+  const auto layout = minimalMeshVertexLayout(reflected.value());
+  REQUIRE(layout);
+  const rhi::PipelineCreateParams params{
+      .vertexShader = {.spirvWords = vertex->data(), .wordCount = vertex->size()},
+      .fragmentShader = {.spirvWords = fragment->data(), .wordCount = fragment->size()},
+      .vertexInputLayout = *layout, .colorFormat = rhi::HdrFormat::Rgba16Float,
+      .pushConstantSizeBytes = 64, .isolatedBindingsOnly = true};
+  std::vector<std::unique_ptr<rhi::Pipeline>> owners;
+  std::vector<rhi::Pipeline*> pipelines;
+  for (int i = 0; i < 321; ++i) {
+    auto pipeline = device.value()->createPipeline(params);
+    REQUIRE(pipeline.isOk());
+    owners.push_back(std::move(pipeline.value()));
+    pipelines.push_back(owners.back().get());
+  }
+  using E = rhi::CommandListCreateError;
+  REQUIRE(device.value()->createIsolatedCommandList(pipelines).error() == E::IsolatedBindingBudgetExceeded);
+  pipelines.pop_back();
+  auto output = device.value()->createOffscreenTarget({.extent = {4, 4}, .format = rhi::Format::Rgba8Unorm});
+  REQUIRE(output.isOk());
+  auto target = output.value()->acquireTarget();
+  REQUIRE(target.isOk());
+  for (int i = 0; i < 2; ++i) {
+    auto commands = device.value()->createIsolatedCommandList(pipelines);
+    REQUIRE(commands.isOk());
+    REQUIRE(device.value()->submit(std::move(commands.value()), *target.value()).isOk());
+    REQUIRE(device.value()->waitIdle().isOk());
+  }
+}

@@ -175,12 +175,12 @@ keeps approval and implementation state separate.
 |---|---|---|---|---|---|
 | 0143 | [Lighting and Environment Workbench](0143-lighting-environment-workbench.md) | Approved | [Plan 0143](../plans/0143-lighting-environment-workbench.md) (Approved) | Merged in [PR #451](https://github.com/slmao/Atlantis/pull/451) as `8c75b99b` | First slice. Independently reopenable Bistro daylight copy at fixed exposure. |
 | 0144 | [Post Processing Panel V1](0144-post-processing-panel.md) | Approved | [Plan 0144](../plans/0144-post-processing-panel.md) (Approved) | Merged in [PR #453](https://github.com/slmao/Atlantis/pull/453) as `c3e92d92` | Second slice. Edit existing exposure, fog and Bloom on the verified active camera and reopen the saved settings. |
-| 0145 | [Render Look Presets and A/B Comparison V1](0145-render-look-presets.md) | Draft | [Plan 0145](../plans/0145-render-look-presets.md) (Draft) | Pending joint review | Third slice. Local named looks, isolated A/B capture, guarded adoption and one-step Undo. [ADR-0191](../adr/0191-render-look-preview-and-adoption.md) Proposed. |
+| 0145 | [Render Look Presets and A/B Comparison V1](0145-render-look-presets.md) | Approved, [design PR #454](https://github.com/slmao/Atlantis/pull/454) merged | [Plan 0145](../plans/0145-render-look-presets.md) (Approved) | [Implementation PR #455](https://github.com/slmao/Atlantis/pull/455), draft pending capture isolation | Third slice. Local named looks, isolated A/B capture, guarded adoption and one-step Undo. [ADR-0191](../adr/0191-render-look-preview-and-adoption.md) Accepted. |
 
 [Spec 0146](0146-render-look-capture-descriptors.md) supplements 0145's
 capture path for [implementation PR #455](https://github.com/slmao/Atlantis/pull/455).
-Its [Plan 0146](../plans/0146-render-look-capture-descriptors.md) and proposed
-[ADR-0192](../adr/0192-render-look-capture-descriptor-ownership.md) are pending joint review.
+Its [Plan 0146](../plans/0146-render-look-capture-descriptors.md) and
+[ADR-0192](../adr/0192-render-look-capture-descriptor-ownership.md) were approved in [PR #456](https://github.com/slmao/Atlantis/pull/456).
 
 ### B. Candidate Spec Backlog
 

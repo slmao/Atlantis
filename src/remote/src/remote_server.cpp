@@ -441,6 +441,14 @@ namespace ac = atlantis::connection::authoring;
 [[nodiscard]] Outcome callControl(atlantis::connection::RuntimeControl& control, std::string_view method,
                                   const Value& p) {
   if (method == "control.status") return Outcome::Ok(codec::encode(control.status()));
+  if (method == "control.captureRenderLook") {
+    using E = atlantis::connection::RenderLookCaptureError;
+    const auto request = codec::decodeRenderLookCaptureRequest(p);
+    if (!request) return Outcome::Ok(codec::err(Value::string(std::string(atlantis::connection::toString(E::InvalidRequest)))));
+    const auto result = control.captureRenderLook(*request);
+    if (result.isOk()) return Outcome::Ok(codec::ok(codec::encode(result.value())));
+    return Outcome::Ok(codec::err(Value::string(std::string(atlantis::connection::toString(result.error())))));
+  }
   if (method == "control.pause") {
     control.pause();
     return Outcome::Ok(Value());

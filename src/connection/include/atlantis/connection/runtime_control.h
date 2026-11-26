@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atlantis/asset_system/asset_guid.h>
+#include <atlantis/connection/authoring_connection.h>
 #include <atlantis/connection/viewport_overlay.h>
 #include <atlantis/result.h>
 
@@ -30,6 +31,7 @@ struct RuntimeStatus {
   // Plan 0065 P4 (ADR-0131 D5): the World's generation -- incremented by every
   // scene reload that swapped; 0 for the World the Runtime started with.
   std::uint64_t sceneGeneration = 0;
+  bool supportsRenderLookCapture = false;
   friend bool operator==(const RuntimeStatus&, const RuntimeStatus&) = default;
 };
 
@@ -104,6 +106,43 @@ struct ViewportCamera {
   float farZ = 0.0f;
   friend bool operator==(const ViewportCamera&, const ViewportCamera&) = default;
 };
+
+enum class RenderLookCaptureError { Unsupported, Busy, InvalidRequest, StaleProjection, TargetChanged,
+                                    Unavailable, BudgetExceeded, CaptureFailed };
+[[nodiscard]] constexpr std::string_view toString(RenderLookCaptureError value) noexcept {
+  switch (value) {
+    case RenderLookCaptureError::Unsupported: return "Unsupported";
+    case RenderLookCaptureError::Busy: return "Busy";
+    case RenderLookCaptureError::InvalidRequest: return "InvalidRequest";
+    case RenderLookCaptureError::StaleProjection: return "StaleProjection";
+    case RenderLookCaptureError::TargetChanged: return "TargetChanged";
+    case RenderLookCaptureError::Unavailable: return "Unavailable";
+    case RenderLookCaptureError::BudgetExceeded: return "BudgetExceeded";
+    case RenderLookCaptureError::CaptureFailed: return "CaptureFailed";
+  }
+  return "CaptureFailed";
+}
+struct RenderLookCaptureRequest {
+  authoring::DocumentToken document;
+  authoring::ApplyId apply;
+  std::uint64_t generation = 0;
+  authoring::RenderLookBasis basis;
+  ViewportCamera camera;
+  std::array<std::vector<authoring::SetProperty>, 2> looks;
+  std::array<std::string, 2> paths;
+};
+inline constexpr std::uint32_t kRenderLookCaptureWidth = 960;
+inline constexpr std::uint32_t kRenderLookCaptureHeight = 540;
+struct RenderLookCapturedPair {
+  authoring::DocumentToken document;
+  authoring::ApplyId apply;
+  std::uint64_t generation = 0;
+  authoring::EntityGuid activeCamera;
+  std::array<FrameData, 2> frames;
+  std::array<CapturedImage, 2> images;
+  std::array<std::vector<authoring::SetProperty>, 2> looks;
+};
+using RenderLookCaptureResult = Result<RenderLookCapturedPair, RenderLookCaptureError>;
 
 inline constexpr std::size_t kMaxViewportNavigationTargets = 64;
 [[nodiscard]] inline bool validViewportNavigationTargets(
@@ -399,6 +438,9 @@ class RuntimeControl {
   // precedence; a camera the frame cannot use is ignored (ADR-0123 D1). Not
   // World state: no event reports it.
   virtual void setViewportCamera(std::optional<ViewportCamera> camera) = 0;
+  [[nodiscard]] virtual RenderLookCaptureResult captureRenderLook(const RenderLookCaptureRequest&) {
+    return RenderLookCaptureResult::Err(RenderLookCaptureError::Unsupported);
+  }
   // Spec 0064 / ADR-0128 D2: the nearest Renderable the ray hits at its
   // current WorldMatrix (both triangle faces, alpha masks ignored; ADR-0123
   // D2), none on a miss; NoGeometry when the Runtime keeps no pick geometry.

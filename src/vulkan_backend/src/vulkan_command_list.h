@@ -49,6 +49,13 @@ struct GpuProfilingResources {
 // movable, not thread-safe.
 class VulkanCommandList final : public atlantis::rhi::CommandList {
  public:
+  struct IsolatedSet {
+    VkDescriptorSet descriptor = VK_NULL_HANDLE;
+    VkBuffer uniform = VK_NULL_HANDLE;
+    std::array<VkDescriptorImageInfo, 8> images{};
+    bool sealed = false;
+  };
+  using IsolatedSets = std::unordered_map<VkPipeline, IsolatedSet>;
   // cmdBeginRendering/cmdEndRendering: VulkanDevice's own resolved
   // dynamic-rendering entry points (Section 8/10 -- whichever of the
   // Core/Extension path that Device selected), borrowed for this
@@ -146,8 +153,15 @@ class VulkanCommandList final : public atlantis::rhi::CommandList {
   // Exists solely for VulkanDevice::submit() (vkEndCommandBuffer,
   // vkQueueSubmit) -- never reached from RHI's public surface.
   [[nodiscard]] VkCommandBuffer commandBuffer() const noexcept { return commandBuffer_; }
+  [[nodiscard]] bool recordingValid() const noexcept override { return recordingValid_; }
+  [[nodiscard]] bool isolated() const noexcept { return isolatedPool_ != VK_NULL_HANDLE; }
+  void takeIsolatedBindings(VkDescriptorPool pool, IsolatedSets sets);
 
  private:
+  void setIsolatedUniform(VkBuffer buffer);
+  void setIsolatedImage(std::uint32_t binding, const VkDescriptorImageInfo& image);
+  [[nodiscard]] bool bindIsolatedDrawSet();
+
   VkDevice device_;
   VkCommandPool commandPool_;
   VkCommandBuffer commandBuffer_;
@@ -167,6 +181,10 @@ class VulkanCommandList final : public atlantis::rhi::CommandList {
   VkDescriptorSet boundDescriptorSet_ = VK_NULL_HANDLE;
   std::uint32_t boundSampledTextureFirstBinding_ = 0;
   std::uint32_t boundSampledTextureBindingCount_ = 0;
+  VkDescriptorPool isolatedPool_ = VK_NULL_HANDLE;
+  IsolatedSets isolatedSets_;
+  IsolatedSet* isolatedSet_ = nullptr;
+  bool recordingValid_ = true;
   // Plan 0056 P4: the current attachment scope's render area, set by every
   // beginRendering() overload -- setScissor() clamps to it.
   VkExtent2D renderArea_{0, 0};

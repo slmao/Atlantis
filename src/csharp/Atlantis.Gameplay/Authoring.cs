@@ -31,6 +31,7 @@ public sealed record DocumentInfo(AssetGuid Scene, Provenance Provenance, string
     public bool SupportsGuardedDuplicateTransactions { get; init; }
     /// <summary>The current hand-authored document supports guarded name transactions.</summary>
     public bool SupportsGuardedNameTransactions { get; init; }
+    public bool SupportsGuardedRenderLookTransactions { get; init; }
 }
 
 /// <summary>One node, in the document's order, with its parent (null at the root).</summary>
@@ -125,6 +126,17 @@ public sealed record RequireDuplicateBatchRevision(ulong ExpectedRevision) : Com
 public sealed record RequireNameBatchDocument(DocumentToken ExpectedDocument) : Command
 {
     public const int MaxWrites = 64;
+}
+
+public sealed record RenderLookBasis(EntityGuid ActiveCamera, IReadOnlyList<EntityGuid> LightRoster,
+    string PlacementSignature);
+
+/// <summary>First command of a guarded transaction of direct-light and active-camera leaves (ADR-0191).</summary>
+public sealed record RequireRenderLookDocument(DocumentToken ExpectedDocument, RenderLookBasis Basis) : Command
+{
+    public const int MaxLights = 65;
+    public const int MaxPlacementBytes = 128 * 1024;
+    public const int MaxWrites = 8 + 3 * MaxLights;
 }
 
 /// <summary>Sets the active camera; null clears it.</summary>
@@ -277,6 +289,9 @@ public enum AuthoringError
     DuplicateBatchStaleRevision,
     InvalidGuardedNameBatch,
     NameBatchStaleDocument,
+    InvalidGuardedRenderLook,
+    RenderLookStaleDocument,
+    RenderLookTargetChanged,
 }
 
 /// <summary>

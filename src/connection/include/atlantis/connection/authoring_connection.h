@@ -53,6 +53,7 @@ struct DocumentInfo {
   bool supportsPrefabRegistration = false;
   bool supportsPrefabSync = false;
   bool supportsGuardedNameTransactions = false;
+  bool supportsGuardedRenderLookTransactions = false;
   friend bool operator==(const DocumentInfo&, const DocumentInfo&) = default;
 };
 
@@ -160,10 +161,26 @@ struct RequireNameBatchDocument {
 };
 inline constexpr std::size_t kMaxGuardedNameWrites = 64;
 
+struct RenderLookBasis {
+  EntityGuid activeCamera;
+  std::vector<EntityGuid> lightRoster;
+  std::string placementSignature;
+  friend bool operator==(const RenderLookBasis&, const RenderLookBasis&) = default;
+};
+/// First command of a closed transaction of direct-light and active-camera leaves (ADR-0191).
+struct RequireRenderLookDocument {
+  DocumentToken expectedDocument;
+  RenderLookBasis basis;
+};
+inline constexpr std::size_t kMaxRenderLookLights = 65;
+inline constexpr std::size_t kMaxRenderLookPlacementBytes = 128 * 1024;
+inline constexpr std::size_t kMaxRenderLookWrites = 8 + 3 * kMaxRenderLookLights;
+
 using Command =
     std::variant<SetProperty, CreateNode, DestroyNode, AddComponent, RemoveComponent, SetParent, SetActiveCamera,
                  SetNodeName, SwapAdjacentSiblings, MoveSiblingRelative, RequireDocumentRevision,
-                 RequireTransformBatchRevision, RequireDuplicateBatchRevision, SetPrefabOrigin, RequireNameBatchDocument>;
+                 RequireTransformBatchRevision, RequireDuplicateBatchRevision, SetPrefabOrigin, RequireNameBatchDocument,
+                 RequireRenderLookDocument>;
 
 // ---------------------------------------------------------------- events
 
@@ -336,6 +353,9 @@ enum class Error : std::uint8_t {
   DuplicateBatchStaleRevision,
   InvalidGuardedNameBatch,
   NameBatchStaleDocument,
+  InvalidGuardedRenderLook,
+  RenderLookStaleDocument,
+  RenderLookTargetChanged,
 };
 
 [[nodiscard]] std::string_view toString(Error error) noexcept;

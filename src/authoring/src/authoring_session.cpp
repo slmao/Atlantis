@@ -13,6 +13,8 @@
 #include <atlantis/authoring/document_validation.h>
 
 #include <algorithm>
+#include <array>
+#include <bit>
 #include <span>
 #include <fstream>
 #include <map>
@@ -68,6 +70,86 @@ struct ConnectionState {
     if (document.nodes[i].guid == node) return i;
   }
   return std::nullopt;
+}
+
+[[nodiscard]] std::optional<ac::RenderLookBasis> renderLookBasis(const scene::AuthoringScene& document) {
+  if (!document.activeCamera) return std::nullopt;
+  std::map<EntityGuid, const scene::AuthoringNode*> nodes;
+  ac::RenderLookBasis basis{*document.activeCamera, {}, {}};
+  std::optional<EntityGuid> directional;
+  for (const auto& node : document.nodes) {
+    nodes.emplace(node.guid, &node);
+    if (!node.light) continue;
+    basis.lightRoster.push_back(node.guid);
+    if (node.light->kind == scene::LightKind::Directional) directional = node.guid;
+  }
+  if (directional && std::ranges::any_of(document.nodes, [&](const auto& node) { return node.parent == directional; }))
+    return std::nullopt;
+  if (basis.lightRoster.size() > ac::kMaxRenderLookLights) return std::nullopt;
+  std::ranges::sort(basis.lightRoster);
+  const auto camera = nodes.find(basis.activeCamera);
+  if (camera == nodes.end() || !camera->second->camera) return std::nullopt;
+
+  std::set<EntityGuid> placementNodes;
+  const auto includePath = [&](EntityGuid start) {
+    auto current = std::optional{start};
+    while (current && placementNodes.insert(*current).second) {
+      const auto node = nodes.find(*current);
+      if (node == nodes.end()) return false;
+      current = node->second->parent;
+    }
+    return true;
+  };
+  if (!includePath(basis.activeCamera) || !std::ranges::all_of(basis.lightRoster, includePath))
+    return std::nullopt;
+  // Canonical GUID order and exact binary32 bits. Names and look values are
+  // excluded. A directional leaf's rotation is itself a look value.
+  auto& signature = basis.placementSignature;
+  const auto appendFloat = [&](float value) {
+    signature.push_back('/');
+    signature.append(std::to_string(std::bit_cast<std::uint32_t>(value)));
+  };
+  for (const auto& id : placementNodes) {
+    const auto& node = *nodes.at(id);
+    signature.append(asset_system::toString(id)).push_back('/');
+    if (node.parent) signature.append(asset_system::toString(*node.parent));
+    signature.push_back('/');
+    signature.push_back(id == basis.activeCamera ? 'C' : id == directional ? 'D' : node.light ? 'P' : 'T');
+    for (float value : node.transform.localPosition) appendFloat(value);
+    for (float value : node.transform.localScale) appendFloat(value);
+    if (id != directional)
+      for (float value : node.transform.localEulerAnglesRadians) appendFloat(value);
+    if (id == basis.activeCamera) {
+      appendFloat(node.camera->fovYRadians);
+      appendFloat(node.camera->nearZ);
+      appendFloat(node.camera->farZ);
+    }
+    signature.push_back('|');
+    if (signature.size() > ac::kMaxRenderLookPlacementBytes) return std::nullopt;
+  }
+  return basis;
+}
+
+[[nodiscard]] bool isRenderLookAddress(const scene::AuthoringNode& node, const ac::RenderLookBasis& basis,
+                                       const ac::PropertyAddress& address) {
+  constexpr std::string_view camera = "asset_system::scene::Camera";
+  constexpr std::string_view fog = "asset_system::scene::CameraFog";
+  constexpr std::string_view bloom = "asset_system::scene::CameraBloom";
+  constexpr std::string_view light = "asset_system::scene::Light";
+  constexpr std::string_view transform = "asset_system::scene::Transform";
+  if (address.node == basis.activeCamera) {
+    constexpr std::array cameraLeaves{schema::fieldId(camera, "exposureCompensationEv"), schema::fieldId(fog, "color"),
+        schema::fieldId(fog, "density"), schema::fieldId(fog, "height"), schema::fieldId(fog, "heightFalloff"),
+        schema::fieldId(fog, "maxOpacity"), schema::fieldId(bloom, "strength"), schema::fieldId(bloom, "threshold")};
+    return address.component == schema::typeId(camera) && std::ranges::find(cameraLeaves, address.field) != cameraLeaves.end();
+  }
+  if (!node.light) return false;
+  if (address.component == schema::typeId(light)) {
+    return address.field == schema::fieldId(light, "color") || address.field == schema::fieldId(light, "intensity") ||
+           (node.light->kind == scene::LightKind::Point && address.field == schema::fieldId(light, "range"));
+  }
+  return node.light->kind == scene::LightKind::Directional && address.component == schema::typeId(transform) &&
+         address.field == schema::fieldId(transform, "localEulerAnglesRadians");
 }
 
 // Atomic save (ADR-0129 D4): a temporary file in the target's directory,
@@ -363,6 +445,39 @@ struct AuthoringSession::State {
     return ac::Error::InvalidGuardedNameBatch;
   }
 
+  std::optional<ac::Error> apply(scene::AuthoringScene&, const ac::RequireRenderLookDocument&,
+                                 std::vector<ac::Event>&) const {
+    ATLANTIS_CHECK_MSG(false, "the transaction admits render-look guards before candidate execution");
+    return ac::Error::InvalidGuardedRenderLook;
+  }
+
+  [[nodiscard]] std::optional<ac::Error> checkRenderLook(const std::vector<ac::Command>& commands,
+                                                        const ac::RequireRenderLookDocument& guard) const {
+    if (commands.size() < 2 || commands.size() > ac::kMaxRenderLookWrites + 1 ||
+        !std::holds_alternative<ac::RequireRenderLookDocument>(commands.front()) ||
+        !std::holds_alternative<HandAuthored>(source.provenance))
+      return ac::Error::InvalidGuardedRenderLook;
+    if (guard.expectedDocument != ac::DocumentToken{documentId, documentRevision})
+      return ac::Error::RenderLookStaleDocument;
+    const auto basis = renderLookBasis(*document);
+    if (!basis || *basis != guard.basis) return ac::Error::RenderLookTargetChanged;
+    std::set<ac::PropertyAddress> addresses;
+    for (const auto& command : std::span(commands).subspan(1)) {
+      const auto* write = std::get_if<ac::SetProperty>(&command);
+      if (!write || !addresses.insert(write->address).second) return ac::Error::InvalidGuardedRenderLook;
+      const auto& address = write->address;
+      const auto node = findNode(*document, address.node);
+      if (!node || !isRenderLookAddress(document->nodes[*node], *basis, address))
+        return ac::Error::InvalidGuardedRenderLook;
+      const auto field = detail::resolveField(address.component, address.field);
+      if (field.isErr()) return ac::Error::InvalidGuardedRenderLook;
+      const auto* component = detail::componentBytes(document->nodes[*node], address.component);
+      if (!component || detail::readField(component, address.component, address.field, field.value()) == write->value)
+        return ac::Error::InvalidGuardedRenderLook;
+    }
+    return std::nullopt;
+  }
+
   static bool validGuardedNameBatch(const std::vector<ac::Command>& commands) {
     if (commands.size() < 2 || commands.size() > ac::kMaxGuardedNameWrites + 1) return false;
     std::set<EntityGuid> nodes;
@@ -519,19 +634,29 @@ struct AuthoringSession::State {
   [[nodiscard]] std::optional<ac::CommandFailure> transact(const std::vector<ac::Command>& commands,
                                                            CommandTicket first) {
     if (!document.has_value()) return ac::CommandFailure{first, ac::Error::NoDocument};
+    const auto lookGuard = std::ranges::find_if(commands, [](const auto& command) {
+      return std::holds_alternative<ac::RequireRenderLookDocument>(command);
+    });
     const auto nameGuard = std::ranges::find_if(commands, [](const auto& command) {
       return std::holds_alternative<ac::RequireNameBatchDocument>(command);
     });
-    const auto guard = nameGuard != commands.end() ? nameGuard : std::ranges::find_if(commands, [](const ac::Command& command) {
-      return std::holds_alternative<ac::RequireDocumentRevision>(command) ||
-             std::holds_alternative<ac::RequireTransformBatchRevision>(command) ||
-             std::holds_alternative<ac::RequireDuplicateBatchRevision>(command);
-    });
+    auto guard = lookGuard;
+    if (guard == commands.end()) guard = nameGuard;
+    if (guard == commands.end()) {
+      guard = std::ranges::find_if(commands, [](const ac::Command& command) {
+        return std::holds_alternative<ac::RequireDocumentRevision>(command) ||
+               std::holds_alternative<ac::RequireTransformBatchRevision>(command) ||
+               std::holds_alternative<ac::RequireDuplicateBatchRevision>(command);
+      });
+    }
     const auto* duplicate = guard == commands.end() ? nullptr : std::get_if<ac::RequireDuplicateBatchRevision>(&*guard);
-    if (nameGuard == commands.end() && !duplicate && std::ranges::any_of(commands, [](const auto& command) {
+    if (lookGuard == commands.end() && nameGuard == commands.end() && !duplicate && std::ranges::any_of(commands, [](const auto& command) {
           return std::holds_alternative<ac::SetPrefabOrigin>(command);
         })) return ac::CommandFailure{first, ac::Error::InvalidGuardedDuplicateBatch};
-    if (nameGuard != commands.end()) {
+    if (lookGuard != commands.end()) {
+      if (const auto refusal = checkRenderLook(commands, std::get<ac::RequireRenderLookDocument>(*lookGuard)))
+        return ac::CommandFailure{CommandTicket{first.value + static_cast<std::uint64_t>(lookGuard - commands.begin())}, *refusal};
+    } else if (nameGuard != commands.end()) {
       const auto ticket = CommandTicket{first.value + static_cast<std::uint64_t>(nameGuard - commands.begin())};
       if (nameGuard != commands.begin() || !std::holds_alternative<HandAuthored>(source.provenance) ||
           !validGuardedNameBatch(commands))
@@ -847,7 +972,7 @@ class InProcessAuthoringConnection final : public connection::AuthoringConnectio
                             static_cast<std::uint64_t>(state_.document->nodes.size()), true, true, !imported,
                             !imported && static_cast<bool>(state_.prefabLookup),
                             !imported && static_cast<bool>(state_.prefabSink),
-                            !imported && static_cast<bool>(state_.prefabRead), !imported};
+                            !imported && static_cast<bool>(state_.prefabRead), !imported, !imported};
   }
 
   atlantis::Result<std::vector<ac::NodeSummary>, ac::Error> listNodes() const override {
@@ -1224,6 +1349,37 @@ const DocumentSource& AuthoringSession::source() const noexcept { return state_-
 
 const scene::AuthoringScene* AuthoringSession::document() const noexcept {
   return state_->document.has_value() ? &*state_->document : nullptr;
+}
+
+Result<asset_system::ValidatedSceneData, ac::Error> AuthoringSession::cookRenderLook(
+    ac::DocumentToken token, ac::ApplyId apply, std::uint64_t generation,
+    const ac::RenderLookBasis& basis, std::span<const ac::SetProperty> values) {
+  using R = Result<asset_system::ValidatedSceneData, ac::Error>;
+  if (!state_->document || !std::holds_alternative<HandAuthored>(state_->source.provenance))
+    return R::Err(ac::Error::NoDocument);
+  if (token != ac::DocumentToken{state_->documentId, state_->documentRevision} ||
+      !state_->projection || state_->projection->generation != generation ||
+      state_->projection->receipt != ac::ApplyReceipt{apply, token.documentRevision})
+    return R::Err(ac::Error::RenderLookStaleDocument);
+  const auto current = renderLookBasis(*state_->document);
+  if (!current || *current != basis) return R::Err(ac::Error::RenderLookTargetChanged);
+  if (values.size() != 8 + current->lightRoster.size() * 3)
+    return R::Err(ac::Error::InvalidGuardedRenderLook);
+  auto candidate = *state_->document;
+  std::set<ac::PropertyAddress> addresses;
+  std::vector<ac::Event> unusedEvents;
+  for (const auto& write : values) {
+    const auto node = findNode(candidate, write.address.node);
+    if (!node || !isRenderLookAddress(candidate.nodes[*node], *current, write.address) ||
+        !addresses.insert(write.address).second)
+      return R::Err(ac::Error::InvalidGuardedRenderLook);
+    if (const auto refusal = state_->apply(candidate, write, unusedEvents)) return R::Err(*refusal);
+  }
+  const auto cooked = asset_system::cookSceneToMemory(candidate, state_->source.scene);
+  if (cooked.isErr()) return R::Err(ac::Error::CookRefused);
+  auto decoded = asset_system::decodeScene(cooked.value());
+  if (decoded.isErr()) return R::Err(ac::Error::CookRefused);
+  return R::Ok(std::move(decoded.value()));
 }
 
 void AuthoringSession::setRecoveryStore(RecoveryStore& store) { state_->recovery = &store; }

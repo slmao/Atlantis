@@ -28,6 +28,7 @@
 #include <vector>
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 // GPU-required, headless integration coverage for Spec 0010/Plan 0010's
 // own OffscreenTarget/readback path (Section 7.2). Real Vulkan device,
@@ -326,7 +327,8 @@ TEST_CASE("A readback Buffer can be created and destroyed", "[vulkan_backend][gp
 }
 
 TEST_CASE("One full render-and-readback cycle exercises all five corrected call sites end to end",
-          "[vulkan_backend][gpu][headless]") {
+          "[vulkan_backend][gpu][headless][isolated-bindings]") {
+  const bool isolated = GENERATE(false, true);
   // Item 7: Renderer::drawFrame() (beginRendering()/transitionResource()
   // via its own internal graph), the caller-built copy pass
   // (copyRenderTargetToBuffer()), and submit() -- the concrete,
@@ -449,7 +451,8 @@ TEST_CASE("One full render-and-readback cycle exercises all five corrected call 
        .pushConstantSizeBytes = 4,  // Plan 0031
        .sampledTextureBindingCount = 1,
        .hasCameraUniformBinding = false,
-       .hasDepthAttachment = false});
+       .hasDepthAttachment = false,
+       .isolatedBindingsOnly = isolated});
   REQUIRE(outputTransformPipelineResult.isOk());
   std::unique_ptr<atlantis::rhi::Pipeline> outputTransformPipeline = std::move(outputTransformPipelineResult.value());
 
@@ -503,7 +506,25 @@ TEST_CASE("One full render-and-readback cycle exercises all five corrected call 
   item.objectToWorld = kIdentityMatrix;
   const std::vector<DrawItem> drawItems{item};
 
-  auto commandListResult = device->createCommandList();
+  const std::array pipelines{&material.pipeline(), outputTransformPipeline.get(), shadowCastPipeline.get()};
+  if (isolated) {
+    using Error = atlantis::rhi::CommandListCreateError;
+    const std::vector overBudget(321, &material.pipeline());
+    REQUIRE(device->checkIsolatedBindings(overBudget).error() == Error::IsolatedBindingBudgetExceeded);
+    const std::array duplicates{&material.pipeline(), &material.pipeline()};
+    REQUIRE(device->createIsolatedCommandList(duplicates).error() == Error::InvalidIsolatedBindings);
+    const std::array one{&material.pipeline()};
+    auto bad = device->createIsolatedCommandList(one);
+    REQUIRE(bad.isOk());
+    bad.value()->bindPipeline(*outputTransformPipeline);
+    CHECK_FALSE(bad.value()->recordingValid());
+    CHECK(device->submit(std::move(bad.value()), *target).isErr());
+    auto ordinary = device->createCommandList();
+    REQUIRE(ordinary.isOk());
+    ordinary.value()->bindPipeline(*outputTransformPipeline);
+    CHECK_FALSE(ordinary.value()->recordingValid());
+  }
+  auto commandListResult = isolated ? device->createIsolatedCommandList(pipelines) : device->createCommandList();
   REQUIRE(commandListResult.isOk());
   std::unique_ptr<CommandList> commandList = std::move(commandListResult.value());
 
@@ -528,6 +549,7 @@ TEST_CASE("One full render-and-readback cycle exercises all five corrected call 
        .incomingState = atlantis::rhi::ResourceState::TransferSource}};
   atlantis::render_graph::execute(copyCompileResult.value(), copyBindings, *commandList);
 
+  REQUIRE(commandList->recordingValid());
   auto submitResult = device->submit(std::move(commandList), *target);
   REQUIRE(submitResult.isOk());
   REQUIRE(device->waitIdle().isOk());

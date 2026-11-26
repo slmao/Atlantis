@@ -363,6 +363,20 @@ class RemoteControl final : public atlantis::connection::RuntimeControl {
     return *status;
   }
   void pause() override { (void)state_->call("control.pause"); }
+  atlantis::connection::RenderLookCaptureResult captureRenderLook(
+      const atlantis::connection::RenderLookCaptureRequest& request) override {
+    using R = atlantis::connection::RenderLookCaptureResult;
+    using E = atlantis::connection::RenderLookCaptureError;
+    if (!status().supportsRenderLookCapture) return R::Err(E::Unsupported);
+    const auto wire = state_->call("control.captureRenderLook", codec::encode(request));
+    if (!wire || !wire->isObject() || wire->asObject().size() != 1) return R::Err(E::CaptureFailed);
+    if (const auto* ok = wire->find("ok"))
+      if (auto pair = codec::decodeRenderLookCapturedPair(*ok, request)) return R::Ok(std::move(*pair));
+    if (const auto* err = wire->find("err"))
+      if (const auto failure = codec::decodeRenderLookCaptureError(*err)) return R::Err(*failure);
+    state_->fail(RemoteError::ProtocolError);
+    return R::Err(E::CaptureFailed);
+  }
   void resume() override { (void)state_->call("control.resume"); }
   void step(atlantis::connection::StepRequest request,
             std::function<void(atlantis::Result<atlantis::connection::FrameReport, atlantis::connection::ControlError>)>
@@ -1264,7 +1278,8 @@ class RemoteAuthoring final : public atlantis::connection::AuthoringConnection {
         std::holds_alternative<ac::RequireDocumentRevision>(command) ||
         std::holds_alternative<ac::RequireTransformBatchRevision>(command) ||
         std::holds_alternative<ac::RequireDuplicateBatchRevision>(command) ||
-        std::holds_alternative<ac::RequireNameBatchDocument>(command))
+        std::holds_alternative<ac::RequireNameBatchDocument>(command) ||
+        std::holds_alternative<ac::RequireRenderLookDocument>(command))
       return submitTransaction({std::move(command)}).first;
     Value params = Value::object();
     params.set("command", codec::encode(command));
@@ -1286,12 +1301,16 @@ class RemoteAuthoring final : public atlantis::connection::AuthoringConnection {
     const bool names = std::ranges::any_of(commands, [](const ac::Command& command) {
       return std::holds_alternative<ac::RequireNameBatchDocument>(command);
     });
-    if (property || transform || duplicate || names) {
+    const bool looks = std::ranges::any_of(commands, [](const ac::Command& command) {
+      return std::holds_alternative<ac::RequireRenderLookDocument>(command);
+    });
+    if (property || transform || duplicate || names || looks) {
       const auto info = document();
       if (!info || (property && !info->supportsGuardedPropertyTransactions) ||
           (transform && !info->supportsGuardedTransformTransactions) ||
           (duplicate && !info->supportsGuardedDuplicateTransactions) ||
-          (names && !info->supportsGuardedNameTransactions)) return {};
+          (names && !info->supportsGuardedNameTransactions) ||
+          (looks && !info->supportsGuardedRenderLookTransactions)) return {};
     }
     if (std::any_of(commands.begin(), commands.end(), [](const ac::Command& command) {
           return std::holds_alternative<ac::MoveSiblingRelative>(command);

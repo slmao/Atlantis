@@ -1,9 +1,9 @@
 # ADR 0191 — Render Look Preview and Guarded Adoption
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-26
 - **Deciders:** Atlantis maintainer
-- **Acceptance:** Pending joint review
+- **Acceptance:** [Joint approval of a528dc09](https://github.com/slmao/Atlantis/pull/454#issuecomment-7195842449)
 - **Related Spec:** [Spec 0145](../specs/0145-render-look-presets.md)
 
 ## Context

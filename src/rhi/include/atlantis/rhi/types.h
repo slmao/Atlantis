@@ -431,6 +431,8 @@ struct PipelineCreateParams {
   // existing call site. A transparent (Blend) material's Pipeline pairs
   // AlphaBlend with depthWriteEnabled == false (ADR-0090 Decision 3).
   ColorBlendMode colorBlendMode = ColorBlendMode::Disabled;
+  // ADR-0192: private capture pipelines require isolated command lists.
+  bool isolatedBindingsOnly = false;
   // Spec 0059 / ADR-0115 D5: a human-readable name for debuggers (RenderDoc) and
   // validation messages. Diagnostic only: copied by the backend at creation, ignored
   // when empty or when the backend has no debug naming, and not part of operator==
@@ -555,6 +557,9 @@ enum class AttachmentLoad : std::uint8_t {
 
 enum class CommandListCreateError {
   CommandBufferAllocationFailed,
+  InvalidIsolatedBindings,
+  IsolatedBindingBudgetExceeded,
+  IsolatedBindingAllocationFailed,
 };
 
 enum class SubmitError {

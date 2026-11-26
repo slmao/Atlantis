@@ -6,10 +6,12 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <variant>
 #include <vector>
 
@@ -57,6 +59,9 @@
 namespace atlantis::vulkan_backend::detail {
 
 namespace {
+
+constexpr std::uint32_t kIsolatedBindingSets = 320;
+constexpr std::uint32_t kIsolatedSamplersPerSet = 8;
 
 constexpr const char* kSwapchainExtension = "VK_KHR_swapchain";
 // Spec 0007 / ADR-0024: the device-level dynamic-rendering extension --
@@ -531,8 +536,14 @@ VulkanDevice::~VulkanDevice() {
   if (drainResult.isErr()) {
     ATLANTIS_LOG_ERROR("~VulkanDevice(): waitAndReleaseRetainedSubmission() failed during destruction");
   }
-  if (vkDeviceWaitIdle(device_) != VK_SUCCESS) {
+  const auto idle = vkDeviceWaitIdle(device_);
+  if (idle != VK_SUCCESS) {
     ATLANTIS_LOG_ERROR("~VulkanDevice(): vkDeviceWaitIdle() failed during destruction");
+  }
+  if (hasRetainedSubmission_ && static_cast<VulkanCommandList&>(*retainedSubmission_).isolated()) {
+    if (idle != VK_SUCCESS && idle != VK_ERROR_DEVICE_LOST) std::quick_exit(EXIT_FAILURE);
+    retainedSubmission_.reset();
+    hasRetainedSubmission_ = false;
   }
 
   // Spec 0059 M6: these hold Vulkan objects of this device; destroyed before it.
@@ -630,15 +641,67 @@ VulkanDevice::createCommandList() {
                                           debugUtils_, GpuProfilingResources{gpuTiming_.get(), tracyGpu_.get()}));
 }
 
+atlantis::Result<std::monostate, atlantis::rhi::CommandListCreateError>
+VulkanDevice::checkIsolatedBindings(std::span<atlantis::rhi::Pipeline* const> pipelines) const {
+  using Error = atlantis::rhi::CommandListCreateError;
+  using R = atlantis::Result<std::monostate, Error>;
+  if (pipelines.size() > kIsolatedBindingSets) return R::Err(Error::IsolatedBindingBudgetExceeded);
+  if (pipelines.empty()) return R::Err(Error::InvalidIsolatedBindings);
+  std::unordered_set<VkPipeline> distinct;
+  distinct.reserve(pipelines.size());
+  for (const auto* candidate : pipelines) {
+    const auto* pipeline = dynamic_cast<const VulkanPipeline*>(candidate);
+    if (!pipeline || pipeline->owner() != device_ || !distinct.insert(pipeline->vkPipeline()).second) {
+      return R::Err(Error::InvalidIsolatedBindings);
+    }
+    if (pipeline->sampledTextureBindingCount() > kIsolatedSamplersPerSet ||
+        pipeline->sampledTextureFirstBinding() > 1) return R::Err(Error::IsolatedBindingBudgetExceeded);
+  }
+  return R::Ok({});
+}
+
+atlantis::Result<std::unique_ptr<atlantis::rhi::CommandList>, atlantis::rhi::CommandListCreateError>
+VulkanDevice::createIsolatedCommandList(std::span<atlantis::rhi::Pipeline* const> pipelines) {
+  using Error = atlantis::rhi::CommandListCreateError;
+  using R = atlantis::Result<std::unique_ptr<atlantis::rhi::CommandList>, Error>;
+  const auto checked = checkIsolatedBindings(pipelines);
+  if (checked.isErr()) return R::Err(checked.error());
+  auto list = createCommandList();
+  if (list.isErr()) return list;
+  const VkDescriptorPool pool = createDescriptorPoolOfSize(device_, kIsolatedBindingSets);
+  if (pool == VK_NULL_HANDLE) return R::Err(Error::IsolatedBindingAllocationFailed);
+
+  VulkanCommandList::IsolatedSets sets;
+  sets.reserve(pipelines.size());
+  for (const auto* pipeline : pipelines) {
+    const auto& vkPipeline = static_cast<const VulkanPipeline&>(*pipeline);
+    const auto layout = vkPipeline.descriptorSetLayout();
+    VkDescriptorSetAllocateInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    info.descriptorPool = pool;
+    info.descriptorSetCount = 1;
+    info.pSetLayouts = &layout;
+    auto& set = sets[vkPipeline.vkPipeline()];
+    if (vkAllocateDescriptorSets(device_, &info, &set.descriptor) != VK_SUCCESS) {
+      vkDestroyDescriptorPool(device_, pool, nullptr);
+      return R::Err(Error::IsolatedBindingAllocationFailed);
+    }
+  }
+  static_cast<VulkanCommandList&>(*list.value()).takeIsolatedBindings(pool, std::move(sets));
+  return list;
+}
+
 atlantis::Result<std::unique_ptr<atlantis::rhi::SubmissionSignal>, atlantis::rhi::SubmitError> VulkanDevice::submit(
     std::unique_ptr<atlantis::rhi::CommandList> commandList, const atlantis::rhi::RenderTarget& target) {
   using ResultT = atlantis::Result<std::unique_ptr<atlantis::rhi::SubmissionSignal>, atlantis::rhi::SubmitError>;
 
   auto& vulkanCommandList = static_cast<VulkanCommandList&>(*commandList);
+  if (!vulkanCommandList.recordingValid())
+    return ResultT::Err(atlantis::rhi::SubmitError::QueueSubmitFailed);
 #if defined(ATLANTIS_PROFILING)
   // Tracy reads back finished GPU zones into this frame's command buffer, once,
   // outside any rendering scope.
-  if (tracyGpu_ != nullptr) tracyGpu_->collect(vulkanCommandList.commandBuffer());
+  if (!vulkanCommandList.isolated() && tracyGpu_ != nullptr) tracyGpu_->collect(vulkanCommandList.commandBuffer());
 #endif
   const VkResult endResult = vkEndCommandBuffer(vulkanCommandList.commandBuffer());
   if (endResult != VK_SUCCESS) {
@@ -692,7 +755,7 @@ atlantis::Result<std::unique_ptr<atlantis::rhi::SubmissionSignal>, atlantis::rhi
 
 #if defined(ATLANTIS_PROFILING)
   pendingGpu_ = vulkanCommandList.takeGpuRegions();
-  pendingGpu_.frameId = atlantis::profile::currentFrameId();
+  if (!vulkanCommandList.isolated()) pendingGpu_.frameId = atlantis::profile::currentFrameId();
 #endif
   retainedSubmission_ = std::move(commandList);
   hasRetainedSubmission_ = true;
@@ -705,6 +768,14 @@ atlantis::Result<std::monostate, atlantis::rhi::SubmitError> VulkanDevice::waitI
 
   const auto drainResult = waitAndReleaseRetainedSubmission();
   if (drainResult.isErr()) {
+    if (hasRetainedSubmission_ && static_cast<VulkanCommandList&>(*retainedSubmission_).isolated()) {
+      const auto idle = vkDeviceWaitIdle(device_);
+      if (idle == VK_SUCCESS || idle == VK_ERROR_DEVICE_LOST) {
+        retainedSubmission_.reset();
+        hasRetainedSubmission_ = false;
+      }
+      if (idle == VK_ERROR_DEVICE_LOST) return ResultT::Err(atlantis::rhi::SubmitError::DeviceLost);
+    }
     return drainResult;
   }
 
@@ -1178,12 +1249,13 @@ VulkanDevice::createPipeline(const atlantis::rhi::PipelineCreateParams& params) 
   // allocateDescriptorSet()'s own doc comment for the full algorithm.
   VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
   VkDescriptorPool originPool = VK_NULL_HANDLE;
-  if (const auto allocError = allocateDescriptorSet(descriptorSetLayout, descriptorSet, originPool);
-      allocError.has_value()) {
-    vkDestroyDescriptorSetLayout(device_, descriptorSetLayout, nullptr);
-    vkDestroyShaderModule(device_, fragmentModule, nullptr);
-    vkDestroyShaderModule(device_, vertexModule, nullptr);
-    return ResultT::Err(*allocError);
+  if (!params.isolatedBindingsOnly) {
+    if (const auto allocError = allocateDescriptorSet(descriptorSetLayout, descriptorSet, originPool)) {
+      vkDestroyDescriptorSetLayout(device_, descriptorSetLayout, nullptr);
+      vkDestroyShaderModule(device_, fragmentModule, nullptr);
+      vkDestroyShaderModule(device_, vertexModule, nullptr);
+      return ResultT::Err(*allocError);
+    }
   }
 
   VkPushConstantRange pushConstantRange{};
@@ -1212,8 +1284,10 @@ VulkanDevice::createPipeline(const atlantis::rhi::PipelineCreateParams& params) 
     // in this Device's own set is, unconditionally) -- checked anyway,
     // per this module's own "every VkResult is checked" rule with no
     // silent exceptions, matching VulkanPipeline's own destructor.
-    const VkResult freeResult = vkFreeDescriptorSets(device_, originPool, 1, &descriptorSet);
-    ATLANTIS_CHECK(freeResult == VK_SUCCESS);
+    if (descriptorSet != VK_NULL_HANDLE) {
+      const VkResult freeResult = vkFreeDescriptorSets(device_, originPool, 1, &descriptorSet);
+      ATLANTIS_CHECK(freeResult == VK_SUCCESS);
+    }
     vkDestroyDescriptorSetLayout(device_, descriptorSetLayout, nullptr);
     vkDestroyShaderModule(device_, fragmentModule, nullptr);
     vkDestroyShaderModule(device_, vertexModule, nullptr);
@@ -1390,8 +1464,10 @@ VulkanDevice::createPipeline(const atlantis::rhi::PipelineCreateParams& params) 
   if (pipelineResult != VK_SUCCESS) {
     vkDestroyPipelineLayout(device_, pipelineLayout, nullptr);
     // See the identical vkFreeDescriptorSets rationale above.
-    const VkResult freeResult = vkFreeDescriptorSets(device_, originPool, 1, &descriptorSet);
-    ATLANTIS_CHECK(freeResult == VK_SUCCESS);
+    if (descriptorSet != VK_NULL_HANDLE) {
+      const VkResult freeResult = vkFreeDescriptorSets(device_, originPool, 1, &descriptorSet);
+      ATLANTIS_CHECK(freeResult == VK_SUCCESS);
+    }
     vkDestroyDescriptorSetLayout(device_, descriptorSetLayout, nullptr);
     return ResultT::Err(toPipelineCreateError(pipelineResult));
   }
@@ -1400,7 +1476,9 @@ VulkanDevice::createPipeline(const atlantis::rhi::PipelineCreateParams& params) 
   debugUtils_.name(device_, VK_OBJECT_TYPE_PIPELINE_LAYOUT, handleValue(pipelineLayout), params.debugName, "/layout");
   debugUtils_.name(device_, VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT, handleValue(descriptorSetLayout), params.debugName,
                    "/set_layout");
-  debugUtils_.name(device_, VK_OBJECT_TYPE_DESCRIPTOR_SET, handleValue(descriptorSet), params.debugName, "/set");
+  if (descriptorSet != VK_NULL_HANDLE) {
+    debugUtils_.name(device_, VK_OBJECT_TYPE_DESCRIPTOR_SET, handleValue(descriptorSet), params.debugName, "/set");
+  }
   return ResultT::Ok(std::make_unique<VulkanPipeline>(device_, originPool, pipeline, pipelineLayout,
                                                         descriptorSetLayout, descriptorSet,
                                                         sampledTextureFirstBinding,
