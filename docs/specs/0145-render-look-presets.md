@@ -1,13 +1,13 @@
 # Spec 0145 — Render Look Presets and A/B Comparison V1
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-26
 - **Milestone:** 3D Scene and Render Effects Editor V1, third slice
 - **Design baseline:** `c3e92d92` on `main`, maintainer merge of [PR #453](https://github.com/slmao/Atlantis/pull/453)
 - **Related Plan:** [Plan 0145](../plans/0145-render-look-presets.md)
-- **Related ADR:** [ADR-0191](../adr/0191-render-look-preview-and-adoption.md) (Proposed)
-- **Approval:** Pending joint review
+- **Related ADR:** [ADR-0191](../adr/0191-render-look-preview-and-adoption.md) (Accepted)
+- **Approval:** [Joint review and implementation authorization](https://github.com/slmao/Atlantis/pull/454#issuecomment-7195842449)
 
 ## Scope
 

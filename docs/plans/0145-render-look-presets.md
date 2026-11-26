@@ -1,10 +1,10 @@
 # Plan 0145 — Render Look Presets and A/B Comparison V1
 
 - **Spec:** [Spec 0145](../specs/0145-render-look-presets.md)
-- **ADR:** [ADR-0191](../adr/0191-render-look-preview-and-adoption.md) (Proposed)
-- **Status:** Draft
+- **ADR:** [ADR-0191](../adr/0191-render-look-preview-and-adoption.md) (Accepted)
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending
+- **Joint Human Review:** The maintainer approved Spec/Plan 0145, J1–J4 and ADR-0191 on `a528dc09` on 2026-11-26 Singapore time, authorizing S2–S4 after merge. [Approval record](https://github.com/slmao/Atlantis/pull/454#issuecomment-7195842449). The maintainer merged PR #454 as `8bf5fba6`.
 
 ## Sequence and expected file scope
 
