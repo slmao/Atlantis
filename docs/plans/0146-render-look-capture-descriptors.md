@@ -1,10 +1,10 @@
 # Plan 0146: Isolated Descriptors for Render Look Capture
 
 - **Spec:** [Spec 0146](../specs/0146-render-look-capture-descriptors.md)
-- **ADR:** [ADR-0192](../adr/0192-render-look-capture-descriptor-ownership.md) (Proposed)
-- **Status:** Draft
+- **ADR:** [ADR-0192](../adr/0192-render-look-capture-descriptor-ownership.md) (Accepted)
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending
+- **Joint Human Review:** The maintainer approved Spec/Plan 0146, J1–J4 and ADR-0192 at `56207a64` and authorized S2–S4 on PR #455 after merge. [Approval record](https://github.com/slmao/Atlantis/pull/456#issuecomment-7196813749). The maintainer merged PR #456 as `f2859a1f`.
 
 ## Objective and sequence
 

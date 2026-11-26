@@ -1110,6 +1110,30 @@ token and target failures are reported as `InvalidGuardedRenderLook`,
 refusal changes no field. Settle the ticket range and verify writes before
 requesting Apply. Existing guards and unguarded edits keep their behavior.
 
+### Render look capture
+
+`control.status` optionally advertises `supportsRenderLookCapture: true`.
+With that capability, `control.captureRenderLook` accepts a `guard` in the
+`RequireRenderLookDocument` wire shape, the settled `applyId` and
+`generation`, one `camera` in the existing viewport camera shape, two
+ordered arrays of complete `SetProperty` values in `looks`, and an
+ordered `outputs` array of two fresh caller-owned absolute PNG paths.
+The Runtime checks both variants against the same projection and returns
+`err` on a refusal or failure. It does not issue a step or Apply.
+
+Success returns `document`, `applyId`, `generation`, `activeCamera`, and
+`variants` in A, B order. Each variant has `role`, `values` and `capture`.
+The capture uses the FrameReport image and data fields with a zero frame and
+`applied: false` to identify offscreen work. Both images are 960 × 540.
+Clients validate the values, identities and output paths against their request.
+
+The CLI's `runtime capture-look <manifest>` reads a bounded text manifest.
+It contains a `require-render-look-document` row as in a scene transaction,
+a `projection <apply-id> <generation>` row, and a `camera` row followed by
+the 16 column-major world-matrix scalars, vertical FOV, near plane and far
+plane. Each variant is an `output <absolute-path>` row followed by the
+complete set of ordinary `scene set` rows in that variant. List A first.
+
 ### Managed asset import
 
 [Spec 0086](../specs/0086-new-asset-import.md#requirements) defines

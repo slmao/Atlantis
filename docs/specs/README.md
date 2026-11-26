@@ -179,8 +179,8 @@ keeps approval and implementation state separate.
 
 [Spec 0146](0146-render-look-capture-descriptors.md) supplements 0145's
 capture path for [implementation PR #455](https://github.com/slmao/Atlantis/pull/455).
-Its [Plan 0146](../plans/0146-render-look-capture-descriptors.md) and proposed
-[ADR-0192](../adr/0192-render-look-capture-descriptor-ownership.md) are pending joint review.
+Its [Plan 0146](../plans/0146-render-look-capture-descriptors.md) and
+[ADR-0192](../adr/0192-render-look-capture-descriptor-ownership.md) were approved in [PR #456](https://github.com/slmao/Atlantis/pull/456).
 
 ### B. Candidate Spec Backlog
 
