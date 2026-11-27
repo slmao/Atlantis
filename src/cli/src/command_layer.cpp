@@ -1669,9 +1669,13 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
     const auto captured = control_->captureMaterialDiagnostic(request);
     if (captured.isErr()) {
       const std::string code(connection::toString(captured.error()));
-      return failed(command, plainError(code, ErrorCategory::Refused,
-          "material diagnostic refused: " + code + (captured.error() == connection::RenderLookCaptureError::CaptureFailed
-            ? ". If the receipt was lost, check both output paths before retrying." : "")));
+      auto reply = failed(command, plainError(code, ErrorCategory::Refused, "material diagnostic refused: " + code));
+      if (captured.error() == connection::RenderLookCaptureError::CaptureFailed) {
+        reply.result = Value::object();
+        reply.result.set("normalPath", Value::string(request.paths[0]));
+        reply.result.set("baseColorPath", Value::string(request.paths[1]));
+      }
+      return reply;
     }
     const auto& pair = captured.value();
     Value result = Value::object(), factor = Value::array(), target = Value::object(), doc = Value::object();

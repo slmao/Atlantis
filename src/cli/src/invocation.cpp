@@ -452,6 +452,11 @@ int Invocation::finish(Reply reply) {
       failure->message += "; material job outcome unknown; retain the job ID and query it after reconnecting";
       failure->text = "error: " + failure->message;
     }
+    if (checked.command == "runtime capture-material-diagnostic" && checked.result.find("normalPath")) {
+      failure->subject = checked.result;
+      failure->message += "; material diagnostic outcome unknown. Verify both output paths and the current projection before retrying.";
+      failure->text = "error: " + failure->message;
+    }
     if (checked.command == "assets move-texture" && checked.result.find("asset")) {
       failure->subject = checked.result;
       failure->message += "; texture move outcome unknown for " + checked.result.find("asset")->asString() +
