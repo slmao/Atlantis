@@ -532,7 +532,7 @@ int main(int argc, char** argv) {
       if (document.isErr() || !document.value() || document.value()->provenance != ac::Provenance::HandAuthored)
         return R::Err(E::Unavailable);
       if (document.value()->token != request.document || apply.isErr() || !apply.value().projection ||
-          (apply.value().request && apply.value().request->state == ac::ApplyState::Pending) ||
+          (apply.value().request && apply.value().request->state != ac::ApplyState::Applied) ||
           apply.value().projection->generation != request.generation ||
           apply.value().projection->receipt.id != request.apply ||
           apply.value().projection->receipt.documentRevision != request.document.documentRevision)

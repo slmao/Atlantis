@@ -1,6 +1,4 @@
 #include "frame_capture.h"
-#include "scene_picking.h"
-
 #include <atlantis/asset_system/asset_catalog.h>
 #include <atlantis/asset_system/mesh_artifact.h>
 
@@ -398,11 +396,11 @@ std::optional<std::vector<std::uint32_t>> readDiagnosticSpirv(const std::filesys
 
 std::optional<connection::RenderLookCaptureError> RuntimeApplication::captureBaseColor(
     rhi::Extent2D extent, const CameraMatrices& camera, const DrawItem& item,
-    rhi::Pipeline& pipeline, std::unique_ptr<rhi::Pipeline> pipelineOwner, std::vector<std::uint8_t>& png) {
+    std::unique_ptr<rhi::Pipeline> pipeline, std::vector<std::uint8_t>& png) {
   using E = connection::RenderLookCaptureError;
   const auto bytes = static_cast<std::size_t>(extent.width) * extent.height * 4;
   auto scratch = std::make_shared<detail::RenderLookResources>();
-  scratch->diagnosticPipeline = std::move(pipelineOwner);
+  scratch->diagnosticPipeline = std::move(pipeline);
   const std::array uniforms{camera.view, camera.projection};
   const auto& factor = item.material->baseColorFactor();
   auto buffer = device_->createBuffer({.purpose = rhi::BufferPurpose::Uniform,
@@ -421,11 +419,11 @@ std::optional<connection::RenderLookCaptureError> RuntimeApplication::captureBas
   auto* data = static_cast<std::byte*>(scratch->camera->mappedData());
   std::memcpy(data, uniforms.data(), sizeof(uniforms));
   std::memcpy(data + sizeof(uniforms), factor.data(), sizeof(factor));
-  const std::array pipelines{&pipeline};
+  const std::array pipelines{scratch->diagnosticPipeline.get()};
   auto commands = device_->createIsolatedCommandList(pipelines);
   if (commands.isErr()) return E::CaptureFailed;
   if (!renderer_.drawBaseColorDiagnostic(*commands.value(), *scratch->target, *scratch->depth,
-                                        *scratch->camera, pipeline, item) ||
+                                        *scratch->camera, *scratch->diagnosticPipeline, item) ||
       !recordLookReadback(*commands.value(), *scratch->target, *scratch->readback))
     return E::CaptureFailed;
   const auto submitted = device_->submit(std::move(commands.value()), *scratch->target);
@@ -496,16 +494,18 @@ connection::MaterialDiagnosticResult RuntimeApplication::captureMaterialDiagnost
           {{0, asset_system::kMeshArtifactPositionOffsetBytes, rhi::VertexAttributeFormat::Float3},
            {1, asset_system::kMeshArtifactUv0OffsetBytes, rhi::VertexAttributeFormat::Float2}}},
       .colorFormat = rhi::Format::Rgba8Srgb, .depthFormat = rhi::DepthFormat::D32Sfloat,
-      .pushConstantSizeBytes = sizeof(Mat4), .sampledTextureBindingCount = 1});
+      .pushConstantSizeBytes = sizeof(Mat4), .sampledTextureBindingCount = 1,
+      .isolatedBindingsOnly = true});
   if (pipeline.isErr()) return R::Err(E::CaptureFailed);
-  auto* diagnosticPipeline = pipeline.value().get();
-  std::array bindings{diagnosticPipeline};
+  const std::array bindings{pipeline.value().get()};
   const auto check = device_->checkIsolatedBindings(bindings);
-  if (check.isErr()) return R::Err(E::BudgetExceeded);
+  if (check.isErr())
+    return R::Err(check.error() == rhi::CommandListCreateError::IsolatedBindingBudgetExceeded
+        ? E::BudgetExceeded : E::CaptureFailed);
   std::array<std::vector<std::uint8_t>, 2> pngs;
   if (const auto error = captureNormalFrames(extent, camera.value(), variants, std::span(pngs).first(1), config))
     return R::Err(*error);
-  if (const auto error = captureBaseColor(extent, camera.value(), target.front(), *diagnosticPipeline,
+  if (const auto error = captureBaseColor(extent, camera.value(), target.front(),
                                          std::move(pipeline.value()), pngs[1])) return R::Err(*error);
   if (!saveLookPair(request.paths, pngs)) return R::Err(E::CaptureFailed);
   const auto& factor = target.front().material->baseColorFactor();

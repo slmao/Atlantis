@@ -355,7 +355,7 @@ class RuntimeApplication {
       std::span<std::vector<std::uint8_t>> pngs, const BootstrapConfig& config);
   [[nodiscard]] std::optional<connection::RenderLookCaptureError> captureBaseColor(
       rhi::Extent2D extent, const CameraMatrices& camera, const renderer::DrawItem& item,
-      rhi::Pipeline& pipeline, std::unique_ptr<rhi::Pipeline> pipelineOwner, std::vector<std::uint8_t>& png);
+      std::unique_ptr<rhi::Pipeline> pipeline, std::vector<std::uint8_t>& png);
 
   // Plan 0055 P8: the DrawItems runFrame() draws, rebuilt between frames
   // (frame_capture.cpp).
