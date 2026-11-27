@@ -27,6 +27,13 @@ internal sealed class RenderLookStore
 
     internal RenderLookStore(DocumentState session)
     {
+        _scope = ScopeFor(session);
+        _directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Atlantis", "RenderLooks", "v1");
+        _path = Path.Combine(_directory, _scope + ".json");
+    }
+
+    internal static string ScopeFor(DocumentState session)
+    {
         if (session.Provenance != Provenance.HandAuthored || !Path.IsPathFullyQualified(session.Source))
             throw new IOException("A verified manual scene source is required.");
         var source = Path.GetFullPath(session.Source);
@@ -36,10 +43,8 @@ internal sealed class RenderLookStore
         uint length = GetFinalPathNameByHandle(handle, normalized, (uint)normalized.Capacity, 0);
         if (length == 0 || length >= normalized.Capacity)
             throw new IOException("The physical scene source could not be verified.");
-        _scope = Convert.ToHexString(SHA256.HashData(
+        return Convert.ToHexString(SHA256.HashData(
             Encoding.UTF8.GetBytes(session.Scene + "\n" + normalized.ToString().ToUpperInvariant())));
-        _directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Atlantis", "RenderLooks", "v1");
-        _path = Path.Combine(_directory, _scope + ".json");
     }
 
     internal RenderLookLibrary Read()
@@ -112,7 +117,7 @@ internal sealed class RenderLookStore
         }
     }
 
-    private static void EnsureDirectory(string directory)
+    internal static void EnsureDirectory(string directory)
     {
         try { SavedSceneWorkspace.Ordinary(directory, directory: true); }
         catch (Exception e) when (e is DirectoryNotFoundException or FileNotFoundException)

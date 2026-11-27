@@ -367,7 +367,11 @@ class RemoteControl final : public atlantis::connection::RuntimeControl {
       const atlantis::connection::RenderLookCaptureRequest& request) override {
     using R = atlantis::connection::RenderLookCaptureResult;
     using E = atlantis::connection::RenderLookCaptureError;
-    if (!status().supportsRenderLookCapture) return R::Err(E::Unsupported);
+    if (!request.extent.valid()) return R::Err(E::InvalidRequest);
+    const auto capabilities = status();
+    if (!capabilities.supportsRenderLookCapture ||
+        (request.extent != atlantis::connection::RenderLookExtent{} && !capabilities.supportsRenderLookCaptureExtent))
+      return R::Err(E::Unsupported);
     const auto wire = state_->call("control.captureRenderLook", codec::encode(request));
     if (!wire || !wire->isObject() || wire->asObject().size() != 1) return R::Err(E::CaptureFailed);
     if (const auto* ok = wire->find("ok"))

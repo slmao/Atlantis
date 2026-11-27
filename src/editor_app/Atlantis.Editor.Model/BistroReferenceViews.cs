@@ -21,6 +21,9 @@ public sealed record BistroReferenceView(string Name, Vector3 Eye, Vector3 LookA
         "Bistro_Exterior_2.png", "a5f18071df20c4068dcff6d82c22a2c784148a52e2ed2af679f789e2c0cc0cd0");
     public string ReferenceUrl => "https://d29g4g2dyqv443.cloudfront.net/sites/default/files/akamai/" + ReferenceFile;
 
+    public ViewportObservation Observation => new(Name, Eye, Vector3.Normalize(LookAt - Eye),
+        new(1.0472f, 0.1f, 200f), new(Width, Height));
+
     public CameraPose Pose()
     {
         Vector3 forward = Vector3.Normalize(LookAt - Eye);

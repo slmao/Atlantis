@@ -302,6 +302,9 @@ internal sealed record BistroProjection(DocumentToken Document, EntityGuid Camer
     }
 }
 
+internal sealed record BookmarkFrame(ViewportObservation View, RuntimeStatus Status, FrameReport Report,
+    bool PreviousProjection);
+
 internal sealed record BistroCapture(BistroReferenceView View, RuntimeStatus Status, FrameReport Report,
     bool PreviousProjection, BistroProjection? Projection = null);
 
@@ -470,16 +473,20 @@ public sealed class EditorWorker : IDisposable
     });
 
     internal void CompareRenderLooks(RenderLookReview review, RenderLookPreset a, RenderLookPreset b,
-        BistroReferenceView view, string pathA, string pathB, Action<RenderLookCapturedPair?, string> onDone) => Enqueue(session =>
+        ViewportObservation view, string pathA, string pathB, Action<RenderLookCapturedPair?, string> onDone) => Enqueue(session =>
     {
         RenderLookCapturedPair? pair = null;
         string notice = "The document, projection, or look targets changed. Refresh before comparing.";
+        bool awaitingCapture = false;
         ApplyProjection? Projection() => _document?.ApplyStatus().Value?.Projection;
         try
         {
             var status = session.Control.Status();
             if (!status.SupportsRenderLookCapture) notice = "This Runtime does not support render look capture.";
-            else if (review.Lifetime == MeshDocumentLifetime &&
+            else if (view.Extent != RenderLookExtent.Default && !status.SupportsRenderLookCaptureExtent)
+                notice = "Update the Runtime to compare at this bookmark size.";
+            else if (session.Control.ViewportVisibility().Value is { Owner: ViewportOwner.None, Presented: true } &&
+                review.Lifetime == MeshDocumentLifetime &&
                 ReadPersistence(session).State?.Token == review.Document.Token &&
                 a.Matches(review.Snapshot.Basis) && b.Matches(review.Snapshot.Basis) &&
                 Projection() is { } projection && projection.Generation == status.SceneGeneration &&
@@ -488,8 +495,11 @@ public sealed class EditorWorker : IDisposable
                 var pose = view.Pose();
                 var request = new RenderLookCaptureRequest(new(review.Document.Token, review.Snapshot.Basis),
                     projection.Receipt.Id, projection.Generation,
-                    new(pose.WorldMatrix, pose.Lens.FovYRadians, pose.Lens.NearZ, pose.Lens.FarZ), a.Values, b.Values, pathA, pathB);
+                    new(pose.WorldMatrix, pose.Lens.FovYRadians, pose.Lens.NearZ, pose.Lens.FarZ), a.Values, b.Values, pathA, pathB)
+                    { Extent = view.Extent };
+                awaitingCapture = true;
                 var result = session.Control.CaptureRenderLook(request);
+                awaitingCapture = false;
                 if (result.Pair is { } captured && review.Lifetime == MeshDocumentLifetime &&
                     ReadPersistence(session).State?.Token == review.Document.Token && Projection() == projection &&
                     session.Control.Status().SceneGeneration == projection.Generation &&
@@ -502,7 +512,8 @@ public sealed class EditorWorker : IDisposable
                 else if (result.Error is { } error) notice = "Comparison refused. " + error;
             }
         }
-        catch (Exception error) when (error is GameplayException or IOException) { notice = error.Message; }
+        catch (Exception error) when (error is GameplayException or IOException)
+        { notice = awaitingCapture ? "Capture outcome unknown. Verify the current projection before retrying." : error.Message; }
         _post(() => onDone(pair, notice));
     });
 
@@ -1396,7 +1407,7 @@ public sealed class EditorWorker : IDisposable
     }
 
     public long Navigate(IReadOnlyList<EntityGuid>? focus, IReadOnlyList<HierarchyRow> rows,
-                         ulong selection, ViewDirection? direction, BistroReferenceView? reference = null)
+                         ulong selection, ViewDirection? direction, ViewportObservation? reference = null)
     {
         var identities = new Dictionary<EntityGuid, object>();
         if (focus is not null)
@@ -1454,7 +1465,7 @@ public sealed class EditorWorker : IDisposable
     }
 
     private void Navigate(RemoteSession session, long intent, long lifetime, ulong selection, EntityGuid[]? targets,
-                          Dictionary<EntityGuid, object> identities, ViewDirection? direction, BistroReferenceView? reference)
+                          Dictionary<EntityGuid, object> identities, ViewDirection? direction, ViewportObservation? reference)
     {
         const string set = "control.setViewportCamera";
         bool focus = targets is not null;
@@ -1488,7 +1499,7 @@ public sealed class EditorWorker : IDisposable
             lock (_lock)
             {
                 extentRevision = _viewportExtentRevision;
-                if (_viewportExtent == (BistroReferenceView.Width, BistroReferenceView.Height))
+                if (_viewportExtent == reference.Size && reference.IsValid)
                 {
                     candidate = new EditorCamera();
                     candidate.SeedNavigation(reference.Pose());
@@ -1665,6 +1676,89 @@ public sealed class EditorWorker : IDisposable
             current.Token != document)
             return null;
         return BistroProjection.Confirm(document, camera, apply.Value, policy.Stamp);
+    }
+
+    internal void ObserveBookmarkView(DocumentToken document, long intent, RenderLookExtent size,
+        ViewportObservation? expected, string? path, Action<BookmarkFrame?, string?> completion)
+    {
+        long lifetime = MeshDocumentLifetime;
+        ulong extent;
+        lock (_lock) extent = _viewportExtentRevision;
+        Enqueue(session =>
+        {
+            bool Current() => !_stopping && !_navigationUncertain && lifetime == MeshDocumentLifetime &&
+                intent == _cameraIntent && extent == _viewportExtentRevision &&
+                _viewportExtent == ((int)size.Width, (int)size.Height) && _pendingCamera is null &&
+                _pendingCameraMotion.Count == 0 && !_dragActive && !_gizmoActive && _requestedGroup is null &&
+                _alignment is null && _placementOverlay is null;
+            const string changed = "The bookmark view changed. Settle the viewport and try again.";
+            void Result(BookmarkFrame? frame, string? error) => _post(() =>
+            {
+                bool current;
+                lock (_lock) current = Current();
+                completion(current ? frame : null, error ?? (current ? null : changed));
+            });
+            lock (_lock)
+                if (!Current() || !size.IsValid) { Result(null, changed); return; }
+
+            bool MatchesDocument() => session.Authoring.DocumentState().Value is { Provenance: Provenance.HandAuthored } state &&
+                state.Token == document;
+            var before = session.Control.Status();
+            var visibility = session.Control.ViewportVisibility().Value;
+            var apply = _document?.ApplyStatus().Value;
+            if (before.Paused || before.SceneGeneration != _navigationGeneration || !MatchesDocument() ||
+                visibility is not { Owner: ViewportOwner.None, Presented: true } ||
+                visibility.Stamp.SceneGeneration != before.SceneGeneration ||
+                apply?.Request?.State == ApplyState.Pending ||
+                _apply?.Status is ApplyStatus.Applying or ApplyStatus.PendingPaused or ApplyStatus.Unknown)
+            {
+                Result(null, "Settle navigation and Apply, and restore default visibility before sampling the view.");
+                return;
+            }
+
+            var pose = _confirmedEditorCamera?.Pose();
+            if (expected is null && pose is null && session.Control.ViewportNavigation([]).Value is { } scene &&
+                scene.SceneGeneration == before.SceneGeneration)
+                pose = NavigationPose(scene.SceneCamera);
+            var view = expected ?? (pose is null ? null : ViewportObservation.Read("", pose, size));
+            if (view is null || view.Extent != size) { Result(null, "No confirmed camera is available."); return; }
+
+            bool sent = false;
+            bool acknowledged = false;
+            try
+            {
+                ulong id;
+                lock (_lock)
+                {
+                    if (!Current()) { Result(null, changed); return; }
+                    id = session.Control.SendStep(new StepRequest(1, path, WithOverlay: false));
+                    sent = true;
+                }
+                var result = session.Control.AwaitStep(id);
+                acknowledged = true;
+                if (result.Report is not { } frame) { Result(null, "Capture refused: " + result.Error); return; }
+                var after = session.Control.Status();
+                if (after.Paused || after.SceneGeneration != before.SceneGeneration || !MatchesDocument() ||
+                    session.Control.ViewportVisibility().Value != visibility ||
+                    frame.Frame <= before.Frame || !view.Matches(frame.Data.View, frame.Data.Projection) ||
+                    (path is not null && (frame.Image is not { } image || image.Path != path ||
+                        image.Width != size.Width || image.Height != size.Height)))
+                {
+                    Result(null, changed);
+                    return;
+                }
+                bool previous = _apply?.Status is ApplyStatus.Failed or ApplyStatus.NeedsApply or ApplyStatus.Superseded ||
+                    apply?.Request?.State == ApplyState.Failed || (apply?.Projection is { } projection &&
+                        projection.Receipt.DocumentRevision != document.DocumentRevision);
+                Result(new(view, before, frame, previous), null);
+            }
+            catch (RemoteException error)
+            {
+                Result(null, sent && !acknowledged && path is not null
+                    ? "Capture outcome unknown. Recheck the view before requesting another capture." : error.Message);
+                throw;
+            }
+        });
     }
 
     internal void CaptureBistroView(BistroReferenceView view, long intent, string path,

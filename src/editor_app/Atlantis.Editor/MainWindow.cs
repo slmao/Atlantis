@@ -550,6 +550,7 @@ public sealed partial class MainWindow : Window
             _worker?.SetGuidesEnabled(_viewportGuides.IsChecked == true);
         };
         InitializeBistroViews();
+        InitializeBookmarks();
         InitializeRenderLooks();
         _locateSurfaceMaterial.Click += (_, _) =>
         {
@@ -558,7 +559,7 @@ public sealed partial class MainWindow : Window
             _materialPickArmed = !_materialPickArmed;
             ShowNavigationMessage(_materialPickArmed ? "Click an opaque surface to locate its material." : "Material location canceled.");
         };
-        foreach (Control control in new Control[] { _resetCamera, _focusSelection, _viewDirection, _navigationSpeed, _viewportGuides, _bistroViews, _locateSurfaceMaterial })
+        foreach (Control control in new Control[] { _resetCamera, _focusSelection, _viewDirection, _navigationSpeed, _viewportGuides, _bistroViews, _viewBookmarks, _locateSurfaceMaterial })
             control.AddHandler(PointerPressedEvent, (_, _) =>
             {
                 _navigationToolbarPointer = true;
@@ -770,7 +771,7 @@ public sealed partial class MainWindow : Window
         AutomationProperties.SetName(_entities, "Scene hierarchy");
 
         var viewCommands = EditorVisuals.Actions(_gizmoMode, _gizmoSpace, _gizmoSnap, _focusSelection,
-            _viewDirection, _navigationSpeed, _resetCamera, _viewportGuides, _bistroViews, _alignSurfaces, _locateSurfaceMaterial);
+            _viewDirection, _navigationSpeed, _resetCamera, _viewportGuides, _bistroViews, _viewBookmarks, _alignSurfaces, _locateSurfaceMaterial);
         viewCommands.HorizontalAlignment = HorizontalAlignment.Right;
         var viewHeader = EditorVisuals.Bar(EditorVisuals.Columns("Auto,*", EditorVisuals.Heading("Viewport"), viewCommands));
         var view = new DockPanel { Background = EditorVisuals.Inset };
@@ -1206,7 +1207,7 @@ public sealed partial class MainWindow : Window
         {
             if (!ReferenceEquals(_worker, worker) || _shuttingDown) return;
             PublishViewportVisibility(state, unknown, notice);
-            if (BistroTuningView && !BistroVisibilityAllowed)
+            if ((BistroTuningView || _activeBookmark is not null) && !BistroVisibilityAllowed)
                 LeaveBistroView("Viewport settings changed. Restore them to return to the reference view.");
         };
         worker.PersistenceChanged += state =>
@@ -1710,7 +1711,7 @@ public sealed partial class MainWindow : Window
         var focused = FocusManager?.GetFocusedElement();
         return IsNavigationTarget(_resetCamera) || IsNavigationTarget(_focusSelection) ||
             IsNavigationTarget(_viewDirection) || IsNavigationTarget(_navigationSpeed) || IsNavigationTarget(_viewportGuides) ||
-            IsNavigationTarget(_bistroViews) || IsNavigationTarget(_locateSurfaceMaterial);
+            IsNavigationTarget(_bistroViews) || IsNavigationTarget(_viewBookmarks) || IsNavigationTarget(_locateSurfaceMaterial);
 
         bool IsNavigationTarget(Control control) =>
             control.IsPointerOver || control.IsKeyboardFocusWithin || ReferenceEquals(focused, control) ||
@@ -6277,7 +6278,9 @@ public sealed partial class MainWindow : Window
     {
         UpdateWorkspaceReset();
         RefreshGroupAsset();
+        var previous = _documentState;
         _documentState = state;
+        ObserveBookmarkDocument(previous, state);
         ObserveSceneStatistics();
         UpdateViewportNavigationActions();
         bool draft = _sceneInput is not null || _batchDraft is not null || _postProcessingDraft is not null ||

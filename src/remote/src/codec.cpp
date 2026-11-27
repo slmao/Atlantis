@@ -1091,6 +1091,7 @@ Value encode(const connection::RuntimeStatus& status) {
   out.set("scene", encodeAsset(status.scene));
   out.set("sceneGeneration", Value::number(status.sceneGeneration));  // Plan 0065 P4 (ADR-0131 D5)
   if (status.supportsRenderLookCapture) out.set("supportsRenderLookCapture", Value::boolean(true));
+  if (status.supportsRenderLookCaptureExtent) out.set("supportsRenderLookCaptureExtent", Value::boolean(true));
   return out;
 }
 
@@ -1110,8 +1111,10 @@ std::optional<connection::RuntimeStatus> decodeStatus(const Value& value) {
     generation = *decoded;
   }
   const auto* renderLook = value.find("supportsRenderLookCapture");
+  const auto* extent = value.find("supportsRenderLookCaptureExtent");
   return connection::RuntimeStatus{paused->asBool(), *f, *s, generation,
-                                   renderLook && renderLook->isBool() && renderLook->asBool()};
+                                   renderLook && renderLook->isBool() && renderLook->asBool(),
+                                   extent && extent->isBool() && extent->asBool()};
 }
 
 Value encode(const connection::RenderLookCaptureRequest& request) {
@@ -1130,11 +1133,29 @@ Value encode(const connection::RenderLookCaptureRequest& request) {
   }
   out.set("looks", std::move(looks));
   out.set("outputs", std::move(outputs));
+  if (request.extent != connection::RenderLookExtent{}) {
+    auto extent = Value::object();
+    extent.set("width", Value::number(static_cast<std::uint64_t>(request.extent.width)));
+    extent.set("height", Value::number(static_cast<std::uint64_t>(request.extent.height)));
+    out.set("extent", std::move(extent));
+  }
   return out;
 }
 
 std::optional<connection::RenderLookCaptureRequest> decodeRenderLookCaptureRequest(const Value& value) {
-  if (!value.isObject() || value.asObject().size() != 6) return std::nullopt;
+  const auto* extent = value.find("extent");
+  if (!value.isObject() || value.asObject().size() != (extent ? 7u : 6u)) return std::nullopt;
+  connection::RenderLookExtent size;
+  if (extent) {
+    const auto* width = extent->find("width");
+    const auto* height = extent->find("height");
+    if (!extent->isObject() || extent->asObject().size() != 2 || !width || !height) return std::nullopt;
+    const auto w = decodeUInt64(*width);
+    const auto h = decodeUInt64(*height);
+    if (!w || !h || *w > 1920 || *h > 1920) return std::nullopt;
+    size = {static_cast<std::uint32_t>(*w), static_cast<std::uint32_t>(*h)};
+    if (!size.valid()) return std::nullopt;
+  }
   const auto* g = value.find("guard");
   const auto* a = value.find("applyId");
   const auto* v = value.find("generation");
@@ -1150,7 +1171,7 @@ std::optional<connection::RenderLookCaptureRequest> decodeRenderLookCaptureReque
   const auto camera = decodeViewportCamera(*c);
   if (!guard || apply.isErr() || !generation || !camera) return std::nullopt;
   connection::RenderLookCaptureRequest request{guard->expectedDocument, apply.value(), *generation,
-                                               guard->basis, *camera, {}, {}};
+                                               guard->basis, *camera, {}, {}, size};
   for (std::size_t i = 0; i < 2; ++i) {
     const auto& values = l->asArray()[i];
     const auto& path = p->asArray()[i];
@@ -1213,8 +1234,8 @@ std::optional<connection::RenderLookCapturedPair> decodeRenderLookCapturedPair(
         values->asArray().size() != request.looks[i].size()) return std::nullopt;
     auto report = decodeFrameReport(*capture);
     if (!report || report->frame != 0 || report->applied || !report->image ||
-        report->image->path != request.paths[i] || report->image->width != connection::kRenderLookCaptureWidth ||
-        report->image->height != connection::kRenderLookCaptureHeight) return std::nullopt;
+        report->image->path != request.paths[i] || report->image->width != request.extent.width ||
+        report->image->height != request.extent.height) return std::nullopt;
     for (std::size_t j = 0; j < request.looks[i].size(); ++j)
       if (values->asArray()[j] != encode(authoring::Command(request.looks[i][j]))) return std::nullopt;
     pair.frames[i] = std::move(report->data);

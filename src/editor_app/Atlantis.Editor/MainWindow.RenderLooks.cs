@@ -42,8 +42,10 @@ public sealed partial class MainWindow
         var refresh = new Button { Content = "Refresh" };
         var a = new ComboBox { PlaceholderText = "Look A", MinWidth = 160 };
         var b = new ComboBox { PlaceholderText = "Look B", MinWidth = 160 };
-        var views = new[] { BistroReferenceView.Street, BistroReferenceView.Terrace };
-        var view = new ComboBox { ItemsSource = views.Select(v => v.Name), SelectedIndex = 0 };
+        var fixedViews = new[] { BistroReferenceView.Street.Observation, BistroReferenceView.Terrace.Observation };
+        ViewportObservation[] views = fixedViews;
+        ViewBookmark[] bookmarks = [];
+        var view = new ComboBox();
         var compare = new Button { Content = "Compare" };
         var sideA = new Button { Content = "Show A" };
         var sideB = new Button { Content = "Show B" };
@@ -109,6 +111,32 @@ public sealed partial class MainWindow
             Retire();
             notice.Text = "The Runtime projection changed. Capture a fresh comparison.";
         }
+        void LoadViews()
+        {
+            var selected = view.SelectedIndex >= 0 && view.SelectedIndex < views.Length ? views[view.SelectedIndex] : null;
+            views = fixedViews;
+            bookmarks = [];
+            if (OperatingSystem.IsWindows() && review is { } current && ReferenceEquals(worker, _worker) &&
+                _documentState.State?.Token.DocumentId == current.Document.Token.DocumentId)
+            {
+                try
+                {
+                    bookmarks = new ViewBookmarkStore(current.Document).Read().Entries.ToArray();
+                    views = fixedViews.Concat(bookmarks.Select(b => b.View)).ToArray();
+                }
+                catch (Exception failure) when (failure is IOException or UnauthorizedAccessException or ArgumentException)
+                { notice.Text = "Bookmarks unavailable. " + failure.Message; }
+            }
+            view.ItemsSource = views.Select((item, index) => index < fixedViews.Length ? item.Name :
+                $"{item.Name} · {item.Extent.Width} × {item.Extent.Height}").ToArray();
+            int restored = Array.IndexOf(views, selected);
+            view.SelectedIndex = restored >= 0 ? restored : 0;
+        }
+        void InvalidateViews()
+        {
+            Retire();
+            LoadViews();
+        }
         void Refresh()
         {
             Retire();
@@ -131,6 +159,7 @@ public sealed partial class MainWindow
                     a.SelectedIndex = names.Length > 0 ? 0 : -1;
                     b.SelectedIndex = names.Length > 1 ? 1 : -1;
                     notice.Text = review is null ? message : "Save current committed values or compare two saved looks.";
+                    LoadViews();
                 }
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException or FormatException)
                 {
@@ -143,11 +172,13 @@ public sealed partial class MainWindow
         }
         worker.PersistenceChanged += MarkChanged;
         worker.ApplyStateChanged += ProjectionChanged;
+        BookmarksChanged += InvalidateViews;
         window.Closed += (_, _) =>
         {
             closed = true;
             worker.PersistenceChanged -= MarkChanged;
             worker.ApplyStateChanged -= ProjectionChanged;
+            BookmarksChanged -= InvalidateViews;
             Retire();
             _renderLooksWindow = null;
         };
@@ -185,12 +216,19 @@ public sealed partial class MainWindow
         compare.Click += (_, _) =>
         {
             if (waiting || changed || review is not { } current || Selected(a) is not { } left ||
-                Selected(b) is not { } right || view.SelectedIndex < 0) return;
+                Selected(b) is not { } right || view.SelectedIndex < 0 || view.SelectedIndex >= views.Length) return;
+            var bookmark = view.SelectedIndex < fixedViews.Length ? null : bookmarks[view.SelectedIndex - fixedViews.Length];
+            if (bookmark is not null && !BookmarkStillSaved(current.Document, bookmark))
+            {
+                InvalidateViews();
+                notice.Text = "The bookmark changed. Select the updated view before comparing.";
+                return;
+            }
             Retire();
             long ticket = Interlocked.Read(ref epoch);
             var fixedView = views[view.SelectedIndex];
             string directory;
-            try { directory = System.IO.Directory.CreateTempSubdirectory("atlantis-render-looks-").FullName; }
+            try { directory = System.IO.Directory.CreateDirectory(Path.Combine(_workDirectory, "look-" + Guid.NewGuid().ToString("N"))).FullName; }
             catch (IOException e) { notice.Text = e.Message; return; }
             var fileA = Path.Combine(directory, "a.png");
             var fileB = Path.Combine(directory, "b.png");
@@ -203,10 +241,16 @@ public sealed partial class MainWindow
                 try
                 {
                     if (closed || changed || ticket != Interlocked.Read(ref epoch) || !ReferenceEquals(worker, _worker)) return;
+                    if (bookmark is not null && !BookmarkStillSaved(current.Document, bookmark))
+                    {
+                        InvalidateViews();
+                        notice.Text = "The bookmark changed during capture. Select the updated view before comparing.";
+                        return;
+                    }
                     if (pair is null) { notice.Text = message; return; }
-                    pngA = Load(fileA);
-                    pngB = Load(fileB);
-                    comparisonContext = $" · {fixedView.Name} · 960 × 540 · projection {pair.Generation} · Apply {pair.Apply}";
+                    pngA = BookmarkComparisonWindow.ReadImage(fileA, fixedView.Extent, reference: false);
+                    pngB = BookmarkComparisonWindow.ReadImage(fileB, fixedView.Extent, reference: false);
+                    comparisonContext = $" · {fixedView.Name} · {fixedView.Extent.Width} × {fixedView.Extent.Height} · projection {pair.Generation} · Apply {pair.Apply}";
                     Display(pngA, left);
                 }
                 catch (Exception e) when (e is IOException or ArgumentException or UnauthorizedAccessException)
@@ -218,9 +262,12 @@ public sealed partial class MainWindow
                 {
                     try
                     {
-                        File.Delete(fileA);
-                        File.Delete(fileB);
-                        System.IO.Directory.Delete(directory);
+                        if (!message.Contains("outcome unknown", StringComparison.Ordinal))
+                        {
+                            File.Delete(fileA);
+                            File.Delete(fileB);
+                            System.IO.Directory.Delete(directory);
+                        }
                     }
                     catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
                     Controls();
@@ -258,14 +305,6 @@ public sealed partial class MainWindow
             shown = preset;
             notice.Text = preset.Name + comparisonContext;
             Controls();
-        }
-        static Bitmap Load(string path)
-        {
-            using var stream = new MemoryStream(BistroReferenceWindow.ReadPng(path), writable: false);
-            var bitmap = new Bitmap(stream);
-            if (bitmap.PixelSize == new PixelSize(960, 540)) return bitmap;
-            bitmap.Dispose();
-            throw new IOException("Unexpected comparison dimensions.");
         }
     }
 

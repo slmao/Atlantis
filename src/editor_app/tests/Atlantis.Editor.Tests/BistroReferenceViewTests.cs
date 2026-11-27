@@ -58,6 +58,65 @@ public static partial class Program
             Check(Codec.DecodeFrameData(Codec.Encode(data).Set("exposureCompensationEv", Json.Parse(value))) is null,
                 "frame rejects malformed exposure " + value);
         BistroProjectionChecks();
+        ViewBookmarkChecks();
+    }
+
+    private static void ViewBookmarkChecks()
+    {
+        var view = BistroReferenceView.Terrace.Observation with { Name = "Close", Extent = new(800, 600) };
+        var matrices = CameraConvention.Matrices(view.Pose(), 800f / 600)!;
+        var wrongAspect = CameraConvention.Matrices(view.Pose(), 960f / 540)!;
+        Check(view.IsValid && view.Matches(matrices.View, matrices.Projection) &&
+            !view.Matches(wrongAspect.View, wrongAspect.Projection), "bookmark matches exact non-widescreen projection");
+        Check(!(view with { Extent = new(1920, 1081) }).IsValid &&
+            !(view with { Forward = System.Numerics.Vector3.UnitY }).IsValid,
+            "bookmark refuses excess pixels and a degenerate pose");
+        if (!OperatingSystem.IsWindows()) return;
+
+        var temp = Directory.CreateTempSubdirectory("atlantis-bookmark-check-");
+        try
+        {
+            var source = Path.Combine(temp.FullName, "hand.scene.txt");
+            File.WriteAllText(source, "fixture");
+            var document = new DocumentState(new(new(Guid.NewGuid()), 1), new(Guid.NewGuid()), source, Provenance.HandAuthored, 1, false);
+            var first = new ViewBookmarkStore(document, temp.FullName);
+            var other = new ViewBookmarkStore(document, temp.FullName);
+            string empty = first.Read().Revision;
+            first.Save(empty, view, null);
+            var current = other.Read();
+            var saved = current.Entries.Single();
+            Check(saved.View == view, "bookmark store preserves all typed view values");
+            Refused(() => other.Save(empty, view with { Name = "Stale" }, null), "bookmark store rejects a stale writer");
+            Refused(() => other.Save(current.Revision, view with { Name = "CLOSE" }, null), "case collision requires confirmation");
+            var path = temp.GetFiles("*.json").Single().FullName;
+            var attrs = File.GetAttributes(path);
+            File.SetAttributes(path, attrs | FileAttributes.ReadOnly);
+            try { Refused(() => other.Save(current.Revision, view with { Name = "Refused" }, null), "native replace refusal is recoverable"); }
+            finally { File.SetAttributes(path, attrs); }
+            Check(first.Read().Revision == current.Revision && temp.GetFiles("*.tmp").Length == 0,
+                "failed replacement preserves the winning bytes and cleans staging");
+            first.Save(current.Revision, view with { Name = "CLOSE" }, saved.Id);
+            Check(other.Read().Entries.Single().Id == saved.Id, "explicit replacement preserves bookmark identity");
+            Check(new ViewBookmarkStore(document with { Scene = new(Guid.NewGuid()) }, temp.FullName).Read().Entries.Count == 0,
+                "bookmark identity separates another scene GUID");
+            var moved = Path.Combine(temp.FullName, "copy.scene.txt");
+            File.Copy(source, moved);
+            Check(new ViewBookmarkStore(document with { Source = moved }, temp.FullName).Read().Entries.Count == 0,
+                "bookmark identity separates another source even with the same scene GUID");
+            first.Remove(first.Read().Revision, saved.Id);
+            Check(other.Read().Entries.Count == 0, "explicit remove affects only its bookmark");
+            File.WriteAllText(path, "{\"version\":2}");
+            Refused(() => first.Save(empty, view, null), "unsupported store refuses overwrite");
+            Check(File.ReadAllText(path) == "{\"version\":2}", "failed store validation preserves original bytes");
+        }
+        finally { temp.Delete(recursive: true); }
+
+        static void Refused(Action write, string description)
+        {
+            try { write(); }
+            catch (IOException) { Check(true, description); return; }
+            Check(false, description);
+        }
     }
 
     private static void BistroProjectionChecks()
@@ -290,7 +349,7 @@ public static partial class Program
                     var area = viewport.ScreenRect();
                     Verify(PostBistroInput(viewport.RuntimeChild, 0x020a, 120 << 16,
                         Coordinates(area.Left + area.Width / 2, area.Top + area.Height / 2)), "native wheel routed through embedded Runtime");
-                    await NameUiWait(() => Field<BistroReferenceView>("_bistroView") is null, "wheel leaves reference mode");
+                    await NameUiWait(() => Field<ViewportObservation>("_bistroView") is null, "wheel leaves reference mode");
                     await NameUiWait(() => !viewport.RuntimeChildHasExtent(960, 540), "flexible viewport after wheel");
                     var moved = await Task.Run(() =>
                     {
@@ -315,9 +374,9 @@ public static partial class Program
             Field<TextBox>("_nameBox").Text == "0131 unsubmitted camera name",
             "active scene camera, document state, unsubmitted draft and Undo unchanged");
         window.Width = 1050;
-        await NameUiWait(() => Field<BistroReferenceView>("_bistroView") is null, "compact window leaves fixed view");
+        await NameUiWait(() => Field<ViewportObservation>("_bistroView") is null, "compact window leaves fixed view");
         Click(Field<MenuItem>("_bistroStreet"));
-        Verify(Field<BistroReferenceView>("_bistroView") is null && !captureAction.IsEnabled &&
+        Verify(Field<ViewportObservation>("_bistroView") is null && !captureAction.IsEnabled &&
             Field<TextBlock>("_viewportNavFeedback").Text?.Contains("960 × 540", StringComparison.Ordinal) == true,
             "compact viewport refuses the preset and explains the physical size");
         window.Width = 1620;
@@ -339,7 +398,7 @@ public static partial class Program
             "explicit edit is visible to a shared client");
         var sceneCamera = Field<Button>("_resetCamera");
         sceneCamera.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-        await NameUiWait(() => Field<BistroReferenceView>("_bistroView") is null &&
+        await NameUiWait(() => Field<ViewportObservation>("_bistroView") is null &&
             Field<TextBlock>("_viewportNavFeedback").Text?.Contains("Scene camera", StringComparison.Ordinal) == true,
             "ordinary Scene Camera return");
         Verify(Json.Write(Codec.Encode(peer.Control.ViewportNavigation([]).Value!.SceneCamera)) == cameraBefore,
