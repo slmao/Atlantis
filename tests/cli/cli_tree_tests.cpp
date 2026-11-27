@@ -320,6 +320,52 @@ TEST_CASE("atlantis: errors -- the shape, --diagnostics=json on stderr, and exit
   CHECK(atlantis::cli::exitCode(atlantis::cli::ErrorCategory::Connection) == 3);
 }
 
+TEST_CASE("material diagnostic distinguishes a refusal from loss of the capture receipt", "[cli][tree]") {
+  namespace fs = std::filesystem;
+  namespace c = atlantis::connection;
+  const auto dir = fs::temp_directory_path() / "atlantis_cli_diagnostic" / std::to_string(std::random_device{}());
+  fs::create_directories(dir);
+  const std::string normalPath = (dir / "normal.png").generic_string();
+  const std::string basePath = (dir / "base.png").generic_string();
+  const auto manifest = dir / "capture.txt";
+  std::ofstream(manifest, std::ios::binary)
+      << "document 52052052-0001-4052-8052-000000000001 7\n"
+      << "projection 52052052-0001-4052-8052-000000000002 4\n"
+      << "camera 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 1.0 0.1 100\n"
+      << "extent 960 540\n"
+      << "target 52052052-0001-4052-8052-000000000001 52052052-0001-4052-8052-000000000003 "
+         "52052052-0001-4052-8052-000000000004\n"
+      << "output " << normalPath << "\noutput " << basePath << '\n';
+  Cli cli;
+  int calls = 0;
+  cli.runtime.materialDiagnostic = [&](const c::MaterialDiagnosticRequest& request) {
+    ++calls;
+    CHECK(request.paths == std::array{normalPath, basePath});
+    return c::MaterialDiagnosticResult::Err(c::RenderLookCaptureError::CaptureFailed);
+  };
+  const std::vector<std::string> args{"runtime", "capture-material-diagnostic", manifest.string()};
+  atlantis::cli::InvocationOptions options;
+  options.json = true;
+  CHECK(cli.invocation->run(args) == 1);
+  CHECK(cli.err.str().find("outcome unknown") == std::string::npos);
+  CHECK(calls == 1);
+  cli.out.str({});
+  options.transportFailure = [&]() -> std::optional<atlantis::cli::CliError> {
+    if (calls < 2) return std::nullopt;
+    return atlantis::cli::CliError{"Disconnected", atlantis::cli::ErrorCategory::Connection,
+                                   "lost connection", {}, "lost connection\n"};
+  };
+  atlantis::cli::Invocation invocation(*cli.connection, &cli.runtime, nullptr, cli.out, cli.err, options);
+  CHECK(invocation.run(args) == 3);
+  CHECK(calls == 2);
+  CHECK(cli.out.str().find("Disconnected") != std::string::npos);
+  CHECK(cli.out.str().find("outcome unknown") != std::string::npos);
+  CHECK(cli.out.str().find(normalPath) != std::string::npos);
+  CHECK(cli.out.str().find(basePath) != std::string::npos);
+  fs::remove(manifest);
+  fs::remove(dir);
+}
+
 TEST_CASE("atlantis: tx submits a file of writes as one transaction -- commit, and abort at n", "[cli][tree][tx]") {
   namespace fs = std::filesystem;
   const fs::path dir = fs::temp_directory_path() / "atlantis_cli_tx" / std::to_string(std::random_device{}());

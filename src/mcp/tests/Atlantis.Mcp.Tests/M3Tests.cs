@@ -19,7 +19,7 @@ internal static partial class Program
     {
         "create_node", "destroy_node", "set_properties", "add_component", "remove_component",
         "set_parent", "set_active_camera", "world.drain_events", "authoring.drain_events",
-        "control.capture_render_look",
+        "control.capture_render_look", "control.capture_material_diagnostic",
     });
 
     private static (string Tool, string Args, string Commands)[] CompositionCases =>
@@ -42,8 +42,8 @@ internal static partial class Program
 
     private static void CompositionChecks(string repo)
     {
-        Check(ToolRegistry.AllMappings.Length == 98 && ToolRegistry.AllMappings.Select(m => m.Tool.Name).Distinct().Count() == 98,
-            "98 unique approved tools including render look capture");
+        Check(ToolRegistry.AllMappings.Length == 99 && ToolRegistry.AllMappings.Select(m => m.Tool.Name).Distinct().Count() == 99,
+            "99 unique approved tools including render look capture");
         FakeSession oldCapture = new() { Response =
             $$$"""{"result":{"paused":false,"frame":5,"scene":"{{{Entity}}}","sceneGeneration":1}}""" };
         JsonValue values = JsonValue.NewArray();
@@ -69,6 +69,23 @@ internal static partial class Program
             "managed pair codec distinguishes default and custom extents");
         lookArguments.Set("extent", Json.Parse("""{"width":1920,"height":1081}"""));
         Check(Codec.DecodeRenderLookCaptureRequest(lookArguments) is null, "pixel-budget overflow is refused");
+        var diagnosticArguments = JsonValue.NewObject()
+            .Set("document", Json.Parse($$$"""{"documentId":"{{{Entity}}}","documentRevision":7}"""))
+            .Set("applyId", JsonValue.String(Entity)).Set("generation", JsonValue.Number(1UL))
+            .Set("camera", Json.Parse(Camera))
+            .Set("target", Json.Parse($$$"""{"entity":"{{{Entity}}}","mesh":"{{{Entity}}}","material":"{{{Entity}}}"}"""))
+            .Set("extent", Json.Parse("""{"width":800,"height":600}"""))
+            .Set("outputs", Json.Parse("""["D:/normal.png","D:/base-color.png"]"""));
+        var diagnosticLegacy = new FakeSession { Response =
+            $$$"""{"result":{"paused":false,"frame":5,"scene":"{{{Entity}}}","sceneGeneration":1}}""" };
+        var unavailable = new ToolRegistry(diagnosticLegacy).Invoke(
+            Request("control.capture_material_diagnostic", Json.Write(diagnosticArguments)));
+        Check(unavailable.IsError == true && diagnosticLegacy.Calls.Single().Method == "control.status",
+            "diagnostic tool refuses old Runtime before sending");
+        Check(Codec.DecodeMaterialDiagnosticRequest(diagnosticArguments)?.Extent == new RenderLookExtent(800, 600),
+            "diagnostic request decodes its exact drawable");
+        diagnosticArguments.Set("extent", Json.Parse("""{"width":800,"height":600,"padding":1}"""));
+        Check(Codec.DecodeMaterialDiagnosticRequest(diagnosticArguments) is null, "diagnostic uses an exact extent object");
         FakeSession oldGroupHost = new() { Response =
             """{"error":{"code":"BadRequest","message":"unknown or malformed asset query"}}""" };
         var groupResult = new ToolRegistry(oldGroupHost).Invoke(Request("assets.static_group", "{\"guid\":\"" + Entity + "\"}"));

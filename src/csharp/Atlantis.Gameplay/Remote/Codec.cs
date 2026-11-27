@@ -527,6 +527,7 @@ public static partial class Codec
             .Set("scene", Encode(status.Scene)).Set("sceneGeneration", JsonValue.Number(status.SceneGeneration));
         if (status.SupportsRenderLookCapture) value.Set("supportsRenderLookCapture", JsonValue.Bool(true));
         if (status.SupportsRenderLookCaptureExtent) value.Set("supportsRenderLookCaptureExtent", JsonValue.Bool(true));
+        if (status.SupportsMaterialDiagnosticCapture) value.Set("supportsMaterialDiagnosticCapture", JsonValue.Bool(true));
         return value;
     }
 
@@ -547,8 +548,73 @@ public static partial class Codec
         return new RuntimeStatus(paused.AsBool, f, s, generation)
         {
             SupportsRenderLookCapture = value.Find("supportsRenderLookCapture") is { IsBool: true, AsBool: true },
-            SupportsRenderLookCaptureExtent = value.Find("supportsRenderLookCaptureExtent") is { IsBool: true, AsBool: true }
+            SupportsRenderLookCaptureExtent = value.Find("supportsRenderLookCaptureExtent") is { IsBool: true, AsBool: true },
+            SupportsMaterialDiagnosticCapture = value.Find("supportsMaterialDiagnosticCapture") is { IsBool: true, AsBool: true }
         };
+    }
+
+    private static JsonValue Encode(MaterialDiagnosticTarget target) => JsonValue.NewObject()
+        .Set("entity", Encode(target.Entity)).Set("mesh", Encode(target.Mesh)).Set("material", Encode(target.Material));
+
+    private static MaterialDiagnosticTarget? DecodeMaterialDiagnosticTarget(JsonValue value) =>
+        Exact(value, 3) && value.Find("entity") is { } e && DecodeEntity(e) is EntityGuid { IsNil: false } entity &&
+        value.Find("mesh") is { } m && DecodeAsset(m) is AssetGuid { IsNil: false } mesh &&
+        value.Find("material") is { } a && DecodeAsset(a) is AssetGuid { IsNil: false } material
+            ? new MaterialDiagnosticTarget(entity, mesh, material) : null;
+
+    public static JsonValue Encode(MaterialDiagnosticRequest request)
+    {
+        var value = JsonValue.NewObject().Set("document", Encode(request.Document))
+            .Set("applyId", JsonValue.String(request.Apply.ToString())).Set("generation", JsonValue.Number(request.Generation))
+            .Set("camera", Encode(request.Camera)).Set("target", Encode(request.Target))
+            .Set("extent", JsonValue.NewObject().Set("width", JsonValue.Number((ulong)request.Extent.Width))
+                .Set("height", JsonValue.Number((ulong)request.Extent.Height)))
+            .Set("outputs", JsonValue.NewArray().Push(JsonValue.String(request.NormalPath)).Push(JsonValue.String(request.BaseColorPath)));
+        if (request.Viewport is { } viewport) value.Set("viewport", Encode(viewport));
+        return value;
+    }
+
+    public static MaterialDiagnosticRequest? DecodeMaterialDiagnosticRequest(JsonValue value)
+    {
+        var viewport = value.Find("viewport");
+        if (!Exact(value, viewport is null ? 7 : 8) ||
+            value.Find("document") is not { } d || DecodeDocumentToken(d) is not A.DocumentToken document ||
+            value.Find("applyId") is not { IsString: true } a || !A.ApplyId.TryParse(a.AsString, out var apply) ||
+            value.Find("generation") is not { } g || DecodeUInt64(g) is not ulong generation ||
+            value.Find("camera") is not { } c || DecodeViewportCamera(c) is not { } camera ||
+            value.Find("target") is not { } t || DecodeMaterialDiagnosticTarget(t) is not { } target ||
+            value.Find("extent") is not { } extent || !Exact(extent, 2) ||
+            extent.Find("width") is not { } w || DecodeUInt64(w) is not ulong width || width > 1920 ||
+            extent.Find("height") is not { } h || DecodeUInt64(h) is not ulong height || height > 1920 ||
+            value.Find("outputs") is not { IsArray: true } outputs || outputs.Items.Count != 2 ||
+            outputs.Items.Any(path => !path.IsString)) return null;
+        var size = new RenderLookExtent((uint)width, (uint)height);
+        var stamp = viewport is null ? null : DecodeViewportStamp(viewport);
+        if (!size.IsValid || (viewport is not null && stamp?.SceneGeneration != generation)) return null;
+        return new(document, apply, generation, camera, size, target, outputs.Items[0].AsString, outputs.Items[1].AsString, stamp);
+    }
+
+    public static MaterialDiagnosticPair? DecodeMaterialDiagnosticPair(JsonValue value, MaterialDiagnosticRequest request)
+    {
+        if (!Exact(value, 7) || value.Find("document") is not { } doc || DecodeDocumentToken(doc) != request.Document ||
+            value.Find("applyId") is not { IsString: true } a || a.AsString != request.Apply.ToString() ||
+            value.Find("generation") is not { } g || DecodeUInt64(g) != request.Generation ||
+            value.Find("target") is not { } t || DecodeMaterialDiagnosticTarget(t) != request.Target ||
+            value.Find("texture") is not { } tex || DecodeAsset(tex) is not AssetGuid { IsNil: false } texture ||
+            DecodeVector3(value.Find("factor")) is not Vector3 factor ||
+            factor.X is < 0 or > 1 || factor.Y is < 0 or > 1 || factor.Z is < 0 or > 1 ||
+            value.Find("captures") is not { IsArray: true } captures || captures.Items.Count != 2)
+            return null;
+        var normal = Read(captures.Items[0], "normal", request.NormalPath);
+        var color = Read(captures.Items[1], "baseColor", request.BaseColorPath);
+        if (normal is null || color is null || !normal.Data.View.SequenceEqual(color.Data.View) ||
+            !normal.Data.Projection.SequenceEqual(color.Data.Projection)) return null;
+        return new(request.Document, request.Apply, request.Generation, request.Target, texture, factor, normal, color);
+
+        FrameReport? Read(JsonValue entry, string role, string path) =>
+            Exact(entry, 2) && entry.Find("role") is { IsString: true } r && r.AsString == role &&
+            entry.Find("capture") is { } c && DecodeFrameReport(c) is { Frame: 0, Applied: false, Image: { } image } frame &&
+            image.Path == path && image.Width == request.Extent.Width && image.Height == request.Extent.Height ? frame : null;
     }
 
     public static JsonValue Encode(RenderLookCaptureRequest request)

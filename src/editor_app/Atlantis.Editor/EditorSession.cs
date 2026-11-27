@@ -2961,6 +2961,40 @@ public sealed class EditorWorker : IDisposable
             binding.Target.IsCurrent(_tree, checkStamp: true);
     }
 
+    internal void CaptureMaterialDiagnostic(LocatedMaterialBinding binding, ViewportObservation view, string normalPath,
+        string colorPath, Action<MaterialDiagnosticPair?, string> completed) => Enqueue(session =>
+    {
+        MaterialDiagnosticPair? pair = null;
+        string message = "The binding or projection changed. Return to the bookmark and pick again.";
+        try
+        {
+            var status = session.Control.Status();
+            if (!status.SupportsMaterialDiagnosticCapture)
+                message = "Update the Runtime to compare material base color.";
+            else if (!status.Paused && RecheckMaterialBinding(session, binding))
+            {
+                var pose = view.Pose();
+                var request = new MaterialDiagnosticRequest(binding.Document, binding.Apply,
+                    binding.Request.SceneGeneration, new(pose.WorldMatrix, pose.Lens.FovYRadians, pose.Lens.NearZ, pose.Lens.FarZ),
+                    view.Extent, new(binding.Hit.Entity, binding.Hit.Mesh, binding.Hit.Material),
+                    normalPath, colorPath, binding.Request.Viewport);
+                var capture = session.Control.CaptureMaterialDiagnostic(request);
+                if (capture.Pair is { } result && RecheckMaterialBinding(session, binding) &&
+                    view.Matches(result.Normal.Data.View, result.Normal.Data.Projection) &&
+                    view.Matches(result.BaseColor.Data.View, result.BaseColor.Data.Projection))
+                    pair = result;
+                else if (capture.Error is { } error)
+                    message = "Material diagnostic refused. " + error;
+            }
+        }
+        catch (Exception error) when (error is GameplayException or IOException) { message = error.Message; }
+        _post(() =>
+        {
+            bool current = MaterialBindingCurrent(binding) && NavigationGeneration == binding.Request.SceneGeneration;
+            completed(current ? pair : null, message);
+        });
+    });
+
     internal void RecheckMaterialBinding(LocatedMaterialBinding binding, Action<bool> completed) => Enqueue(session =>
     {
         bool current = RecheckMaterialBinding(session, binding);

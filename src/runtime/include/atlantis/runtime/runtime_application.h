@@ -42,6 +42,7 @@
 #include <atlantis/world/scene_instantiation.h>
 
 #include <array>
+#include <filesystem>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -59,6 +60,7 @@ namespace atlantis::runtime {
 namespace detail {
 struct MeshPreviewResources;
 struct RenderLookResources;
+struct CaptureVariant;
 struct PickInstance;
 using PreviewCompletion = atlantis::Result<std::monostate, rhi::SubmitError> (*)(rhi::Device&);
 }
@@ -184,6 +186,10 @@ class RuntimeApplication {
   [[nodiscard]] atlantis::Result<atlantis::connection::CapturedImage, atlantis::connection::ControlError>
   captureImage(const std::string& path,
                const std::optional<atlantis::connection::ViewportOverlay>& overlay = std::nullopt);
+  // Frame thread, between frames. Borrows the active catalog and uses only capture-owned render targets.
+  [[nodiscard]] connection::MaterialDiagnosticResult captureMaterialDiagnostic(
+      const connection::MaterialDiagnosticRequest& request, const asset_system::AssetCatalog& catalog,
+      const BootstrapConfig& config, const std::filesystem::path& shaderDirectory);
   [[nodiscard]] connection::RenderLookCaptureResult captureRenderLook(
       const connection::RenderLookCaptureRequest& request,
       const std::array<asset_system::ValidatedSceneData, 2>& looks, const BootstrapConfig& config);
@@ -341,6 +347,15 @@ class RuntimeApplication {
       const CameraMatrices& camera, const atlantis::renderer::ViewportOverlayDrawList& list);
   [[nodiscard]] bool viewportOverlayPipelinesFor(atlantis::rhi::Format format);
   void releaseViewportOverlayResources();
+
+  [[nodiscard]] std::optional<connection::RenderLookCaptureError> checkCaptureAdmission(
+      connection::RenderLookExtent size, std::uint64_t generation, const std::array<std::string, 2>& paths) const;
+  [[nodiscard]] std::optional<connection::RenderLookCaptureError> captureNormalFrames(
+      rhi::Extent2D extent, const CameraMatrices& camera, std::span<detail::CaptureVariant> variants,
+      std::span<std::vector<std::uint8_t>> pngs, const BootstrapConfig& config);
+  [[nodiscard]] std::optional<connection::RenderLookCaptureError> captureBaseColor(
+      rhi::Extent2D extent, const CameraMatrices& camera, const renderer::DrawItem& item,
+      std::unique_ptr<rhi::Pipeline> pipeline, std::vector<std::uint8_t>& png);
 
   // Plan 0055 P8: the DrawItems runFrame() draws, rebuilt between frames
   // (frame_capture.cpp).

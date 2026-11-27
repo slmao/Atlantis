@@ -363,6 +363,23 @@ class RemoteControl final : public atlantis::connection::RuntimeControl {
     return *status;
   }
   void pause() override { (void)state_->call("control.pause"); }
+  atlantis::connection::MaterialDiagnosticResult captureMaterialDiagnostic(
+      const atlantis::connection::MaterialDiagnosticRequest& request) override {
+    using R = atlantis::connection::MaterialDiagnosticResult;
+    using E = atlantis::connection::RenderLookCaptureError;
+    if (!request.extent.valid()) return R::Err(E::InvalidRequest);
+    if (!status().supportsMaterialDiagnosticCapture) return R::Err(E::Unsupported);
+    const auto wire = state_->call("control.captureMaterialDiagnostic", codec::encode(request));
+    if (!wire) return R::Err(E::CaptureFailed);
+    if (wire->isObject() && wire->asObject().size() == 1) {
+      if (const auto* ok = wire->find("ok"))
+        if (auto pair = codec::decodeMaterialDiagnosticPair(*ok, request)) return R::Ok(std::move(*pair));
+      if (const auto* err = wire->find("err"))
+        if (const auto failure = codec::decodeRenderLookCaptureError(*err)) return R::Err(*failure);
+    }
+    state_->fail(RemoteError::ProtocolError);
+    return R::Err(E::CaptureFailed);
+  }
   atlantis::connection::RenderLookCaptureResult captureRenderLook(
       const atlantis::connection::RenderLookCaptureRequest& request) override {
     using R = atlantis::connection::RenderLookCaptureResult;

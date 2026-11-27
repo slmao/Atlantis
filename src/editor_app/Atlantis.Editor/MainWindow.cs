@@ -2024,6 +2024,7 @@ public sealed partial class MainWindow : Window
                 _hierarchyRows.FirstOrDefault(row => row.Node == binding.Hit.Entity) is not { } row ||
                 !ReferenceEquals(row.Incarnation, binding.Target.NodeIdentity))
             { ShowNavigationMessage(error ?? "Material location expired. Pick again."); return; }
+            CloseMaterialDiagnostic();
             _locatedMaterial = binding;
             _locateMaterialFocus = binding.Target.Address;
             if (!_hierarchyProjection.Rows.Any(item => item.Node == row.Node)) ClearHierarchyFilters();
@@ -2047,6 +2048,14 @@ public sealed partial class MainWindow : Window
         var duplicate = new Button { Content = "Duplicate for this binding" };
         var replace = new Button { Content = "Replace this binding with copy" };
         var copyNote = new Button { Content = "Copy published review note" };
+        var diagnose = new Button { Content = "Compare Base Color" };
+        diagnose.AddHandler(PointerPressedEvent, (_, e) =>
+        {
+            if (!BistroLocatorProtected()) return;
+            e.Handled = true;
+            _editLine.Text = "Finish the current draft or gesture before comparing base color.";
+        }, RoutingStrategies.Tunnel);
+        diagnose.Click += (_, _) => CompareMaterialDiagnostic(binding, diagnose);
         copyNote.Click += async (_, _) =>
         {
             if (_publishedMaterialCopy is not { } review || review.Scene != binding.Scene ||
@@ -2078,7 +2087,7 @@ public sealed partial class MainWindow : Window
                 Content = EditorVisuals.Details(string.Join("\n", binding.KnownUses))
             }),
             EditorVisuals.Secondary("A shared edit affects every use after activation, including uses outside this document."),
-            EditorVisuals.Actions(edit, duplicate), copyNote, note, replace));
+            diagnose, EditorVisuals.Actions(edit, duplicate), copyNote, note, replace));
     }
 
     private void OpenLocatedMaterial(MaterialMode mode, LocatedMaterialBinding binding, Button origin)

@@ -1,9 +1,9 @@
 # ADR 0194 — Isolated Base-Color Diagnostic Capture
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-28
 - **Deciders:** Atlantis maintainer
-- **Acceptance:** Pending joint review.
+- **Acceptance:** [Maintainer joint approval of 5144fe7a](https://github.com/slmao/Atlantis/pull/459#issuecomment-7223673579) on 2026-11-28.
 - **Related Spec:** [Spec 0148](../specs/0148-material-lighting-diagnostics.md)
 - **Related decisions:** [ADR-0186](0186-shared-material-binding-pick.md), [ADR-0192](0192-render-look-capture-descriptor-ownership.md), [ADR-0193](0193-bounded-render-look-capture-extent.md)
 

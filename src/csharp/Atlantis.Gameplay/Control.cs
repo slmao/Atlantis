@@ -10,6 +10,7 @@ public sealed record RuntimeStatus(bool Paused, ulong Frame, AssetGuid Scene, ul
 {
     public bool SupportsRenderLookCapture { get; init; }
     public bool SupportsRenderLookCaptureExtent { get; init; }
+    public bool SupportsMaterialDiagnosticCapture { get; init; }
 }
 
 /// <summary>
@@ -102,6 +103,17 @@ public sealed record RenderLookCapturedPair(FrameReport A, FrameReport B,
 }
 
 public sealed record RenderLookCaptureResult(RenderLookCapturedPair? Pair, RenderLookCaptureError? Error);
+
+public sealed record MaterialDiagnosticTarget(EntityGuid Entity, AssetGuid Mesh, AssetGuid Material);
+
+public sealed record MaterialDiagnosticRequest(Authoring.DocumentToken Document, Authoring.ApplyId Apply,
+    ulong Generation, ViewportCamera Camera, RenderLookExtent Extent, MaterialDiagnosticTarget Target,
+    string NormalPath, string BaseColorPath, ViewportStamp? Viewport = null);
+
+public sealed record MaterialDiagnosticPair(Authoring.DocumentToken Document, Authoring.ApplyId Apply, ulong Generation,
+    MaterialDiagnosticTarget Target, AssetGuid Texture, Vector3 Factor, FrameReport Normal, FrameReport BaseColor);
+
+public sealed record MaterialDiagnosticResult(MaterialDiagnosticPair? Pair, RenderLookCaptureError? Error);
 
 public enum ViewportBoundsKind { Mesh, Origin }
 

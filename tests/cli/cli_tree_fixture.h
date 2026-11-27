@@ -107,7 +107,14 @@ class FakeRuntime final : public connection::RuntimeControl {
   }
 
   connection::RuntimeStatus status() override {
-    return {paused_, frame_, atlantis::asset_system::parseAssetGuid(kScene).value()};
+    connection::RuntimeStatus result{paused_, frame_, atlantis::asset_system::parseAssetGuid(kScene).value()};
+    result.supportsMaterialDiagnosticCapture = static_cast<bool>(materialDiagnostic);
+    return result;
+  }
+  std::function<connection::MaterialDiagnosticResult(const connection::MaterialDiagnosticRequest&)> materialDiagnostic;
+  connection::MaterialDiagnosticResult captureMaterialDiagnostic(
+      const connection::MaterialDiagnosticRequest& request) override {
+    return materialDiagnostic ? materialDiagnostic(request) : RuntimeControl::captureMaterialDiagnostic(request);
   }
   void pause() override { paused_ = true; }
   void resume() override { paused_ = false; }

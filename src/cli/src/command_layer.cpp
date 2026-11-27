@@ -1599,6 +1599,103 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
     return reply;
   }
 
+  if (t.size() >= 2 && t[0] == "runtime" && t[1] == "capture-material-diagnostic") {
+    const std::string command = "runtime capture-material-diagnostic";
+    const auto malformed = [&] { return failed(command, usageError("runtime capture-material-diagnostic <manifest>")); };
+    if (t.size() != 3) return malformed();
+    if (!control_ || !control_->status().supportsMaterialDiagnosticCapture)
+      return failed(command, plainError("Unsupported", ErrorCategory::Refused, "update Runtime for material diagnostics"));
+    std::ifstream file(std::string(t[2]), std::ios::binary | std::ios::ate);
+    const auto size = file.tellg();
+    if (!file || size <= 0 || size > 8192) return malformed();
+    file.seekg(0);
+    std::string row;
+    const auto read = [&] {
+      if (!std::getline(file, row)) return false;
+      if (!row.empty() && row.back() == '\r') row.pop_back();
+      return true;
+    };
+    const auto integer = [](std::string_view token, auto& output) {
+      const auto end = token.data() + token.size();
+      const auto result = std::from_chars(token.data(), end, output);
+      return result.ec == std::errc{} && result.ptr == end;
+    };
+    connection::MaterialDiagnosticRequest request{};
+    if (!read()) return malformed();
+    auto fields = tokenize(row);
+    if (fields.size() != 3 || fields[0] != "document" || !integer(fields[2], request.document.documentRevision))
+      return malformed();
+    const auto document = text::parseEntity(fields[1]);
+    if (document.isErr()) return malformed();
+    request.document.documentId = document.value();
+    if (!read()) return malformed();
+    fields = tokenize(row);
+    if (fields.size() != 3 || fields[0] != "projection" || !integer(fields[2], request.generation)) return malformed();
+    const auto apply = ac::parseApplyId(fields[1]);
+    if (apply.isErr()) return malformed();
+    request.apply = apply.value();
+    if (!read()) return malformed();
+    fields = tokenize(row);
+    if (fields.size() != 20 || fields[0] != "camera") return malformed();
+    const auto matrix = parseFloats<16>(fields, 1);
+    const auto lens = parseFloats<3>(fields, 17);
+    if (!matrix || !lens) return malformed();
+    request.camera = {*matrix, (*lens)[0], (*lens)[1], (*lens)[2]};
+    if (!read()) return malformed();
+    fields = tokenize(row);
+    if (fields.size() != 3 || fields[0] != "extent" || !integer(fields[1], request.extent.width) ||
+        !integer(fields[2], request.extent.height) || !request.extent.valid()) return malformed();
+    if (!read()) return malformed();
+    fields = tokenize(row);
+    if (fields.size() != 4 || fields[0] != "target") return malformed();
+    const auto entity = text::parseEntity(fields[1]);
+    const auto mesh = asset_system::parseAssetGuid(fields[2]);
+    const auto material = asset_system::parseAssetGuid(fields[3]);
+    if (entity.isErr() || mesh.isErr() || material.isErr()) return malformed();
+    request.target = {entity.value(), mesh.value(), material.value()};
+    if (!read()) return malformed();
+    fields = tokenize(row);
+    if (!fields.empty() && fields[0] == "viewport") {
+      connection::ViewportStamp stamp{};
+      if (fields.size() != 3 || !integer(fields[1], stamp.sceneGeneration) ||
+          !integer(fields[2], stamp.revision) || stamp.sceneGeneration != request.generation || !read()) return malformed();
+      request.viewport = stamp;
+    }
+    for (std::size_t i = 0; i < request.paths.size(); ++i) {
+      if ((i != 0 && !read()) || !row.starts_with("output ") || row.size() <= 7) return malformed();
+      request.paths[i] = row.substr(7);
+    }
+    if (read()) return malformed();
+    const auto captured = control_->captureMaterialDiagnostic(request);
+    if (captured.isErr()) {
+      const std::string code(connection::toString(captured.error()));
+      auto reply = failed(command, plainError(code, ErrorCategory::Refused, "material diagnostic refused: " + code));
+      if (captured.error() == connection::RenderLookCaptureError::CaptureFailed) {
+        reply.result = Value::object();
+        reply.result.set("normalPath", Value::string(request.paths[0]));
+        reply.result.set("baseColorPath", Value::string(request.paths[1]));
+      }
+      return reply;
+    }
+    const auto& pair = captured.value();
+    Value result = Value::object(), factor = Value::array(), target = Value::object(), doc = Value::object();
+    doc.set("documentId", Value::string(text::formatEntity(pair.document.documentId)));
+    doc.set("documentRevision", Value::number(pair.document.documentRevision));
+    result.set("document", std::move(doc));
+    result.set("applyId", Value::string(ac::toString(pair.apply)));
+    result.set("generation", Value::number(pair.generation));
+    target.set("entity", Value::string(text::formatEntity(pair.target.entity)));
+    target.set("mesh", Value::string(asset_system::toString(pair.target.mesh)));
+    target.set("material", Value::string(asset_system::toString(pair.target.material)));
+    result.set("target", std::move(target));
+    result.set("texture", Value::string(asset_system::toString(pair.texture)));
+    for (const float component : pair.factor) factor.push(Value::number(component));
+    result.set("factor", std::move(factor));
+    result.set("normal", stepJson({0, false, pair.frames[0], pair.images[0]}, true));
+    result.set("baseColor", stepJson({0, false, pair.frames[1], pair.images[1]}, true));
+    return done(command, "Captured normal shading and base color.\n", std::move(result));
+  }
+
   if (t.size() >= 2 && t[0] == "runtime" && t[1] == "capture-look") {
     const std::string command = "runtime capture-look";
     const auto malformed = [&] { return failed(command, usageError("runtime capture-look <manifest>")); };

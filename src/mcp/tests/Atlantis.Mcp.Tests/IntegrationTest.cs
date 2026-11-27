@@ -134,8 +134,8 @@ internal sealed class IntegrationTest
         foreach (McpClient client in new[] { first, second })
         {
             var tools = await client.ListToolsAsync(cancellationToken: _token);
-            Require("real host discovers exactly 98 unique tools",
-                tools.Count == 98 && tools.Select(t => t.Name).Distinct().Count() == 98, $"discovered {tools.Count}");
+            Require("real host discovers exactly 99 unique tools",
+                tools.Count == 99 && tools.Select(t => t.Name).Distinct().Count() == 99, $"discovered {tools.Count}");
             Require("real host discovers alignment face query", tools.Any(t => t.Name == "control.pick_alignment_faces"));
         }
         var unavailableCreation = await first.CallToolAsync("authoring.create_scene",

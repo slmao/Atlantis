@@ -21,6 +21,7 @@
 #include <atlantis/connection/runtime_connection.h>
 #include <atlantis/remote/remote_server.h>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <filesystem>
@@ -515,6 +516,34 @@ int main(int argc, char** argv) {
       if (b.isErr()) return R::Err(failure(b.error()));
       return app.captureRenderLook(request, {std::move(a.value()), std::move(b.value())}, config);
     };
+#if defined(ATLANTIS_RUNTIME_BASE_COLOR_SHADER_DIR)
+    target.captureMaterialDiagnostic = [&app, &authoring, &assets, &config](
+        const atlantis::connection::MaterialDiagnosticRequest& request) {
+      namespace ac = atlantis::connection::authoring;
+      using E = atlantis::connection::RenderLookCaptureError;
+      using R = atlantis::connection::MaterialDiagnosticResult;
+      if (!request.extent.valid()) return R::Err(E::InvalidRequest);
+      auto* session = authoring.session();
+      const auto catalog = assets.catalog();
+      if (!session || !catalog || !session->document()) return R::Err(E::Unavailable);
+      const auto client = session->connect();
+      const auto document = client->documentState();
+      const auto apply = client->applyStatus(std::nullopt);
+      if (document.isErr() || !document.value() || document.value()->provenance != ac::Provenance::HandAuthored)
+        return R::Err(E::Unavailable);
+      if (document.value()->token != request.document || apply.isErr() || !apply.value().projection ||
+          (apply.value().request && apply.value().request->state != ac::ApplyState::Applied) ||
+          apply.value().projection->generation != request.generation ||
+          apply.value().projection->receipt.id != request.apply ||
+          apply.value().projection->receipt.documentRevision != request.document.documentRevision)
+        return R::Err(E::StaleProjection);
+      const auto& nodes = session->document()->nodes;
+      const auto found = std::ranges::find(nodes, request.target.entity, &atlantis::asset_system::scene::AuthoringNode::guid);
+      if (found == nodes.end() || !found->renderable || found->renderable->meshAsset != request.target.mesh ||
+          found->renderable->materialAsset != request.target.material) return R::Err(E::TargetChanged);
+      return app.captureMaterialDiagnostic(request, *catalog, config, ATLANTIS_RUNTIME_BASE_COLOR_SHADER_DIR);
+    };
+#endif
     control = std::make_unique<atlantis::runtime::RuntimeControlHost>(
         std::move(target), atlantis::runtime::RuntimeControlHost::Options{});
     // Plan 0066 P4 (ADR-0132 D4; J11): a served RuntimeControl can set a

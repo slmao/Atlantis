@@ -32,6 +32,7 @@ constexpr std::string_view kUsage =
     "  runtime pause | runtime resume | runtime step [--frames <n>] [--capture [<path>] [--with-overlay]]\n"
     "  runtime camera set --matrix <16 numbers> --fov <rad> --near <n> --far <f> | runtime camera clear\n"
     "  runtime capture-look <manifest>     capture two complete looks without Apply\n"
+    "  runtime capture-material-diagnostic <manifest>     capture normal shading and base color\n"
     "  runtime material-binding GEN MIN MAX --origin X Y Z --direction X Y Z [--viewport REV]\n"
     "  runtime raycast --origin <x> <y> <z> --direction <x> <y> <z>\n"
     "  runtime visibility status | set GEN REV [--hide GUID] [--lock GUID] [--keep GUID] | clear GEN REV\n"
@@ -449,6 +450,11 @@ int Invocation::finish(Reply reply) {
     if (checked.command == "assets material-status" && checked.error) {
       failure->subject = checked.result;
       failure->message += "; material job outcome unknown; retain the job ID and query it after reconnecting";
+      failure->text = "error: " + failure->message;
+    }
+    if (checked.command == "runtime capture-material-diagnostic" && checked.result.find("normalPath")) {
+      failure->subject = checked.result;
+      failure->message += "; material diagnostic outcome unknown. Verify both output paths and the current projection before retrying.";
       failure->text = "error: " + failure->message;
     }
     if (checked.command == "assets move-texture" && checked.result.find("asset")) {

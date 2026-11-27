@@ -1140,6 +1140,26 @@ plane. An optional `extent <width> <height>` row follows `camera`.
 Each variant is an `output <absolute-path>` row followed by the
 complete set of ordinary `scene set` rows in that variant. List A first.
 
+### Material diagnostic capture
+
+An optional `supportsMaterialDiagnosticCapture: true` in `control.status`
+advertises `control.captureMaterialDiagnostic`. The closed request contains
+`document`, `applyId`, `generation`, `camera`, `extent`, `target`
+(`entity`, `mesh`, `material`), `outputs` (two fresh absolute PNG paths)
+and optional `viewport`. The sizes use ADR-0193's pixel envelope.
+The result echoes the document, Apply, generation and target and adds the
+resolved `texture` GUID, linear RGB `factor` and two `captures` with roles
+`normal` and `baseColor`. Their ordinary FrameReport payloads mark offscreen
+work (`frame: 0`, `applied: false`). The base-color PNG preserves coverage in
+alpha. A refusal uses the existing render capture error names.
+See [ADR-0194](../adr/0194-isolated-base-color-diagnostic-capture.md).
+
+The bounded CLI manifest for `runtime capture-material-diagnostic <manifest>`
+contains `document <id> <revision>`, `projection <apply-id> <generation>`,
+`camera` in render-look form, `extent <width> <height>`, and
+`target <entity> <mesh> <material>` rows. An optional
+`viewport <generation> <revision>` precedes the two ordered `output` rows.
+
 ### Managed asset import
 
 [Spec 0086](../specs/0086-new-asset-import.md#requirements) defines
