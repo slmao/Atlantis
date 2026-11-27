@@ -57,6 +57,18 @@ internal static partial class Program
         var refusedLook = new ToolRegistry(oldCapture).Invoke(Request("control.capture_render_look", Json.Write(lookArguments)));
         Check(refusedLook.IsError == true && oldCapture.Calls.Single().Method == "control.status",
             "render look capture discovers old hosts without sending a capture");
+        var originalPair = Json.Write(lookArguments);
+        FakeSession legacyExtent = new() { Response =
+            $$$"""{"result":{"paused":false,"frame":5,"scene":"{{{Entity}}}","sceneGeneration":1,"supportsRenderLookCapture":true}}""" };
+        lookArguments.Set("extent", Json.Parse("""{"width":800,"height":600}"""));
+        refusedLook = new ToolRegistry(legacyExtent).Invoke(Request("control.capture_render_look", Json.Write(lookArguments)));
+        Check(refusedLook.IsError == true && legacyExtent.Calls.Single().Method == "control.status",
+            "legacy pair hosts refuse custom extents locally");
+        Check(Codec.DecodeRenderLookCaptureRequest(lookArguments)?.Extent == new RenderLookExtent(800, 600) &&
+            Codec.DecodeRenderLookCaptureRequest(Json.Parse(originalPair))?.Extent == RenderLookExtent.Default,
+            "managed pair codec distinguishes default and custom extents");
+        lookArguments.Set("extent", Json.Parse("""{"width":1920,"height":1081}"""));
+        Check(Codec.DecodeRenderLookCaptureRequest(lookArguments) is null, "pixel-budget overflow is refused");
         FakeSession oldGroupHost = new() { Response =
             """{"error":{"code":"BadRequest","message":"unknown or malformed asset query"}}""" };
         var groupResult = new ToolRegistry(oldGroupHost).Invoke(Request("assets.static_group", "{\"guid\":\"" + Entity + "\"}"));

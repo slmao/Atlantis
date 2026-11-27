@@ -124,9 +124,6 @@ std::optional<std::vector<std::uint8_t>> encodeCapturePng(
 
 namespace {
 
-constexpr rhi::Extent2D kLookExtent{connection::kRenderLookCaptureWidth, connection::kRenderLookCaptureHeight};
-constexpr std::size_t kLookBytes = static_cast<std::size_t>(kLookExtent.width) * kLookExtent.height * 4;
-
 bool recordLookReadback(rhi::CommandList& commands, rhi::RenderTarget& target, rhi::Buffer& readback) {
   render_graph::RenderGraphBuilder graph;
   const auto image = graph.declareResource("look-output");
@@ -202,6 +199,9 @@ connection::RenderLookCaptureResult RuntimeApplication::captureRenderLook(
     const std::array<asset_system::ValidatedSceneData, 2>& looks, const BootstrapConfig& config) {
   using E = connection::RenderLookCaptureError;
   using R = connection::RenderLookCaptureResult;
+  if (!request.extent.valid()) return R::Err(E::InvalidRequest);
+  const rhi::Extent2D extent{request.extent.width, request.extent.height};
+  const auto bytes = static_cast<std::size_t>(extent.width) * extent.height * 4;
   if (lifecycle_.state() != RuntimeLifecycleState::Running || !device_ || !lastSeenFormat_ || environmentData_)
     return R::Err(E::Unavailable);
   if (incompleteRenderLook_) return R::Err(E::Busy);
@@ -218,7 +218,8 @@ connection::RenderLookCaptureResult RuntimeApplication::captureRenderLook(
   if (!output || !shadowCastPipeline_ || !shadowMapSampler_ || !fallbackMaterial_)
     return R::Err(E::Unavailable);
   const auto camera = extractCameraMatrices(request.camera.worldMatrix, request.camera.fovYRadians,
-                                             request.camera.nearZ, request.camera.farZ, 16.0f / 9.0f);
+                                             request.camera.nearZ, request.camera.farZ,
+                                             static_cast<float>(extent.width) / static_cast<float>(extent.height));
   if (camera.isErr()) return R::Err(E::InvalidRequest);
 
   struct Variant {
@@ -278,10 +279,10 @@ connection::RenderLookCaptureResult RuntimeApplication::captureRenderLook(
   auto uniform = device_->createBuffer({.purpose = rhi::BufferPurpose::Uniform, .sizeBytes = kCameraUniformBufferSizeBytes});
   auto shadowUniform = device_->createBuffer({.purpose = rhi::BufferPurpose::Uniform, .sizeBytes = sizeof(CameraMatrices)});
   auto shadow = device_->createShadowMap({.extent = {1024, 1024}});
-  auto depth = device_->createTexture({.extent = kLookExtent, .format = rhi::DepthFormat::D32Sfloat});
-  auto hdr = device_->createHdrColorTarget({.extent = kLookExtent});
-  auto readback = device_->createBuffer({.purpose = rhi::BufferPurpose::Readback, .sizeBytes = kLookBytes});
-  auto target = device_->createOffscreenTarget({.extent = kLookExtent, .format = *lastSeenFormat_});
+  auto depth = device_->createTexture({.extent = extent, .format = rhi::DepthFormat::D32Sfloat});
+  auto hdr = device_->createHdrColorTarget({.extent = extent});
+  auto readback = device_->createBuffer({.purpose = rhi::BufferPurpose::Readback, .sizeBytes = bytes});
+  auto target = device_->createOffscreenTarget({.extent = extent, .format = *lastSeenFormat_});
   if (uniform.isErr() || shadowUniform.isErr() || shadow.isErr() || depth.isErr() || hdr.isErr() ||
       readback.isErr() || target.isErr()) return R::Err(E::CaptureFailed);
   scratch->camera = std::move(uniform.value());
@@ -292,7 +293,7 @@ connection::RenderLookCaptureResult RuntimeApplication::captureRenderLook(
   scratch->readback = std::move(readback.value());
   scratch->output = std::move(target.value());
   if (wantsBloom) {
-    auto bloom = renderer::createBloomTargets(*device_, kLookExtent);
+    auto bloom = renderer::createBloomTargets(*device_, extent);
     if (bloom.isErr()) return R::Err(E::CaptureFailed);
     scratch->bloom.emplace(std::move(bloom.value()));
   }
@@ -339,18 +340,18 @@ connection::RenderLookCaptureResult RuntimeApplication::captureRenderLook(
       return R::Err(E::CaptureFailed);
     }
     const auto* pixels = static_cast<const std::uint8_t*>(scratch->readback->mappedData());
-    std::vector<std::uint8_t> rgba(pixels, pixels + kLookBytes);
+    std::vector<std::uint8_t> rgba(pixels, pixels + bytes);
     const bool bgra = *lastSeenFormat_ == rhi::Format::Bgra8Srgb || *lastSeenFormat_ == rhi::Format::Bgra8Unorm;
     for (std::size_t p = 0; p < rgba.size(); p += 4) {
       if (bgra) std::swap(rgba[p], rgba[p + 2]);
       rgba[p + 3] = 255;
     }
-    auto png = detail::encodeCapturePng(kLookExtent.width, kLookExtent.height, rgba, kLookBytes * 2);
+    auto png = detail::encodeCapturePng(extent.width, extent.height, rgba, bytes * 2);
     if (!png) return R::Err(E::CaptureFailed);
     pngs[i] = std::move(*png);
     result.frames[i] = detail::toFrameData(variant.lighting, camera.value(), variant.items.size(),
                                            active.camera.exposureCompensationEv);
-    result.images[i] = {request.paths[i], kLookExtent.width, kLookExtent.height};
+    result.images[i] = {request.paths[i], extent.width, extent.height};
   }
   if (!saveLookPair(request.paths, pngs)) return R::Err(E::CaptureFailed);
   return R::Ok(std::move(result));

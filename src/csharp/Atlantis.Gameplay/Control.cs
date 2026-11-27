@@ -9,6 +9,7 @@ namespace Atlantis.Gameplay;
 public sealed record RuntimeStatus(bool Paused, ulong Frame, AssetGuid Scene, ulong SceneGeneration = 0)
 {
     public bool SupportsRenderLookCapture { get; init; }
+    public bool SupportsRenderLookCaptureExtent { get; init; }
 }
 
 /// <summary>
@@ -78,9 +79,20 @@ public enum RenderLookCaptureError
     Unsupported, Busy, InvalidRequest, StaleProjection, TargetChanged, Unavailable, BudgetExceeded, CaptureFailed
 }
 
+public readonly record struct RenderLookExtent(uint Width, uint Height)
+{
+    public static RenderLookExtent Default => new(RenderLookCapturedPair.Width, RenderLookCapturedPair.Height);
+
+    public bool IsValid => Width is >= 128 and <= 1920 && Height is >= 128 and <= 1920 &&
+        (ulong)Width * Height <= 2_073_600;
+}
+
 public sealed record RenderLookCaptureRequest(Authoring.RequireRenderLookDocument Guard, Authoring.ApplyId Apply,
     ulong Generation, ViewportCamera Camera, IReadOnlyList<Authoring.SetProperty> A,
-    IReadOnlyList<Authoring.SetProperty> B, string OutputA, string OutputB);
+    IReadOnlyList<Authoring.SetProperty> B, string OutputA, string OutputB)
+{
+    public RenderLookExtent Extent { get; init; } = RenderLookExtent.Default;
+}
 
 public sealed record RenderLookCapturedPair(FrameReport A, FrameReport B,
     Authoring.DocumentToken Document, Authoring.ApplyId Apply, ulong Generation, EntityGuid ActiveCamera)

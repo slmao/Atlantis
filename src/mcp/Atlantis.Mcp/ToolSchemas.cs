@@ -71,8 +71,14 @@ internal static class ToolSchemas
     };
     internal static readonly JsonNode Camera = Object(("worldMatrix", Vector(Float, 16)),
         ("fovYRadians", Float), ("nearZ", Float), ("farZ", Float));
-    internal static JsonElement RenderLookCapture() => Parameters(("guard", RenderLookGuard), ("applyId", String),
-        ("generation", Integer), ("camera", Camera), ("looks", Vector(Array(RenderLookWrite), 2)), ("outputs", Vector(String, 2)));
+    internal static JsonElement RenderLookCapture()
+    {
+        var fields = Object(("guard", RenderLookGuard), ("applyId", String), ("generation", Integer), ("camera", Camera),
+            ("looks", Vector(Array(RenderLookWrite), 2)), ("outputs", Vector(String, 2)),
+            ("extent", Object(("width", Integer), ("height", Integer))));
+        fields["required"] = new JsonArray("guard", "applyId", "generation", "camera", "looks", "outputs");
+        return JsonSerializer.SerializeToElement(fields);
+    }
     private static readonly JsonNode Depth = Enum("Tested", "OnTop");
     private static readonly JsonNode Segment = Object(("a", Vector(Number, 3)), ("b", Vector(Number, 3)),
         ("color", Vector(Number, 4)), ("depth", Depth), ("width", Number));

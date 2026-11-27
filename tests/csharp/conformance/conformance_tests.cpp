@@ -425,6 +425,8 @@ void authoringVectors(std::vector<Vector>& out) {
                  codec::encode(connection::EventFilter{connection::EventKindSet::all(), kEntity, std::nullopt})});
 
   out.push_back({"status", "RuntimeStatus", codec::encode(connection::RuntimeStatus{true, 42, kAsset, 3})});
+  out.push_back({"status.bookmark_extent", "RuntimeStatus",
+                 codec::encode(connection::RuntimeStatus{false, 43, kAsset, 4, true, true})});
   out.push_back({"step.plain", "StepRequest", codec::encode(connection::StepRequest{1, std::nullopt})});
   out.push_back({"step.image", "StepRequest",
                  codec::encode(connection::StepRequest{3, std::string("C:\\captures\\beacon \"k\" \xc3\xa9.png")})});

@@ -29,7 +29,8 @@ public sealed partial class MainWindow
     private readonly MenuItem _bistroExit = new() { Header = "Leave reference view" };
     private readonly MenuItem _bistroEnable = new() { Header = "Use reference views for this Bistro copy" };
     private readonly DispatcherTimer _bistroLayoutTimer = new() { Interval = TimeSpan.FromMilliseconds(40) };
-    private BistroReferenceView? _bistroView;
+    private ViewportObservation? _bistroView;
+    private BistroReferenceView? _bistroPreset;
     private BistroReferenceWindow? _bistroCompare;
     private long? _bistroOptIn;
     private long _bistroRevision;
@@ -63,9 +64,9 @@ public sealed partial class MainWindow
         _bistroLayoutTimer.Tick += (_, _) => SettleBistroDrawable();
         ScalingChanged += (_, _) =>
         {
-            if (_bistroView is null) return;
-            if (!BistroAreaFits()) { LeaveBistroView("Enlarge the viewport to at least 960 × 540 physical pixels."); return; }
-            _viewport.SetPhysicalSize((BistroReferenceView.Width, BistroReferenceView.Height), RenderScaling);
+            if (_bistroView is not { } view) return;
+            if (!BistroAreaFits(view)) { LeaveBistroView(FitMessage(view)); return; }
+            _viewport.SetPhysicalSize(view.Size, RenderScaling);
             OnBistroDrawableChanged();
         };
     }
@@ -74,7 +75,7 @@ public sealed partial class MainWindow
         BistroVisibilityAllowed && _worker is { } worker &&
         (_bistroBuiltIn || (_canAddMeshToDocument && _bistroOptIn == worker.MeshDocumentLifetime));
 
-    private bool BistroTuningView => _bistroView == BistroReferenceView.Terrace &&
+    private bool BistroTuningView => _bistroPreset == BistroReferenceView.Terrace &&
         _worker is { } worker && _canAddMeshToDocument && _bistroOptIn == worker.MeshDocumentLifetime;
 
     private bool BistroTuningAllowed => BistroTuningView && BistroVisibilityAllowed;
@@ -86,39 +87,51 @@ public sealed partial class MainWindow
         _bistroEnable.IsVisible = !BistroAllowed && _canAddMeshToDocument;
         _bistroStreet.IsEnabled = _bistroTerrace.IsEnabled = BistroAllowed;
         _bistroExit.IsEnabled = _bistroView is not null;
-        _bistroCapture.IsEnabled = _bistroReady && !_navigationPending && !_bistroCapturing &&
+        _bistroCapture.IsEnabled = _bistroPreset is not null && _bistroReady && !_navigationPending && !_bistroCapturing &&
             !_bistroApplyBlocked && !_play.IsEnabled && navigation;
         _bistroBefore.IsVisible = _bistroAfter.IsVisible = _bistroLocateCamera.IsVisible = BistroTuningAllowed;
         _bistroLocateCamera.IsEnabled = BistroTuningAllowed && _bistroReady && navigation;
         _bistroBefore.IsEnabled = BistroTuningAllowed && _bistroCapture.IsEnabled;
         _bistroAfter.IsEnabled = _bistroBefore.IsEnabled && _bistroCompare?.Before is not null;
+        UpdateBookmarkActions(navigation && hosted && BistroVisibilityAllowed);
     }
 
-    private bool BistroAreaFits() =>
-        _bistroViewportArea.Bounds.Width * RenderScaling >= BistroReferenceView.Width &&
-        _bistroViewportArea.Bounds.Height * RenderScaling >= BistroReferenceView.Height;
+    private bool BistroAreaFits(ViewportObservation view) =>
+        _bistroViewportArea.Bounds.Width * RenderScaling >= view.Extent.Width &&
+        _bistroViewportArea.Bounds.Height * RenderScaling >= view.Extent.Height;
+
+    private static string FitMessage(ViewportObservation view) =>
+        $"Enlarge the viewport to at least {view.Extent.Width} × {view.Extent.Height} physical pixels.";
 
     private void SelectBistroView(BistroReferenceView view)
     {
         if (!_bistroViews.IsEnabled || !BistroAllowed) return;
-        if (!BistroAreaFits())
+        StartFixedView(view.Observation, view, null);
+    }
+
+    private bool StartFixedView(ViewportObservation view, BistroReferenceView? preset, ViewBookmark? bookmark)
+    {
+        if (!BistroAreaFits(view))
         {
-            LeaveBistroView();
-            ShowNavigationMessage("Enlarge the viewport to at least 960 × 540 physical pixels.");
-            return;
+            ShowNavigationMessage(FitMessage(view));
+            return false;
         }
-        if (_bistroView != view) _bistroCompare?.ClearPair();
+        if (_bistroPreset != preset) _bistroCompare?.ClearPair();
+        if (_activeBookmark != bookmark) CloseBookmarkComparison();
+        _bistroPreset = preset;
+        _activeBookmark = bookmark;
         _bistroView = view;
         RetireViewportOleTarget(expireRelease: true);
-        _viewport.SetPhysicalSize((BistroReferenceView.Width, BistroReferenceView.Height), RenderScaling);
+        _viewport.SetPhysicalSize(view.Size, RenderScaling);
         OnBistroDrawableChanged();
+        return true;
     }
 
     private void OnBistroAreaChanged()
     {
-        if (_bistroView is null) return;
-        if (!BistroAreaFits())
-            LeaveBistroView("Reference view closed. Enlarge the viewport to 960 × 540 physical pixels to return.");
+        if (_bistroView is not { } view) return;
+        if (!BistroAreaFits(view))
+            LeaveBistroView(FitMessage(view));
         else OnBistroDrawableChanged();
     }
 
@@ -127,6 +140,7 @@ public sealed partial class MainWindow
         if (_bistroView is null) return;
         ++_bistroRevision;
         ++_pickRequest;
+        _bookmarkProjection = null;
         _bistroReady = _bistroSent = _bistroCapturing = false;
         _navigationPending = true;
         _bistroLayoutStarted = Stopwatch.GetTimestamp();
@@ -143,26 +157,27 @@ public sealed partial class MainWindow
             LeaveBistroView("The fixed viewport did not settle. Select the reference view again.");
             return;
         }
-        if (_viewport.Window is not { } window || !BistroFixedDrawable(window)) return;
+        if (_viewport.Window is not { } window || !BistroFixedDrawable(window, view)) return;
         _bistroLayoutTimer.Stop();
         _bistroSent = true;
         _viewportCameraIntent = worker.Navigate(null, _hierarchyRows, _selection.Generation, null, view);
     }
 
-    private static bool BistroFixedDrawable(ViewportWindow window) =>
-        window.Width == BistroReferenceView.Width && window.Height == BistroReferenceView.Height &&
+    private static bool BistroFixedDrawable(ViewportWindow window, ViewportObservation view) =>
+        window.Width == view.Extent.Width && window.Height == view.Extent.Height &&
         window.RuntimeChildHasExtent(window.Width, window.Height);
 
     private void ObserveBistroNavigation(ViewportNavigationState state)
     {
         if (_bistroView is not { } view || !_bistroSent) return;
         if (!state.ProjectionReady || state.Message != view.Name ||
-            _viewport.Window is not { } window || !BistroFixedDrawable(window))
+            _viewport.Window is not { } window || !BistroFixedDrawable(window, view))
         {
             LeaveBistroView(state.Message ?? "Return to the reference view after the Runtime scene changes.");
             return;
         }
-        _bistroReady = true;
+        if (_activeBookmark is null) _bistroReady = true;
+        else VerifyRestoredBookmark(view);
     }
 
     private void LeaveBistroView(string? message = null)
@@ -172,6 +187,10 @@ public sealed partial class MainWindow
         ++_pickRequest;
         if (!_bistroSent) _navigationPending = false;
         _bistroView = null;
+        _bistroPreset = null;
+        _activeBookmark = null;
+        _bookmarkProjection = null;
+        CloseBookmarkComparison();
         _bistroCompare?.ClearPair();
         _bistroReady = _bistroSent = _bistroCapturing = false;
         _bistroResizeRecovery = true;
@@ -183,7 +202,8 @@ public sealed partial class MainWindow
 
     private bool BistroProjectionReady(ViewportWindow window)
     {
-        if (_bistroView is not null) return _bistroReady && BistroFixedDrawable(window);
+        if (_bistroView is { } view)
+            return _bistroReady && (_activeBookmark is null || BookmarkProjectionCurrent) && BistroFixedDrawable(window, view);
         if (!_bistroResizeRecovery) return true;
         _bistroResizeRecovery = !window.RuntimeChildHasExtent(window.Width, window.Height);
         return !_bistroResizeRecovery;
@@ -224,7 +244,7 @@ public sealed partial class MainWindow
     private void CaptureBistroView(bool paired = false, bool after = false)
     {
         MenuItem action = !paired ? _bistroCapture : after ? _bistroAfter : _bistroBefore;
-        if (!action.IsEnabled || _worker is not { } worker || _bistroView is not { } view) return;
+        if (!action.IsEnabled || _worker is not { } worker || _bistroPreset is not { } view) return;
         var comparison = _bistroCompare;
         var baseline = after ? comparison?.Before?.Capture.Projection : null;
         if (after && baseline is null) return;
@@ -515,11 +535,11 @@ internal sealed class BistroReferenceWindow : Window
         return true;
     }
 
-    internal static byte[] ReadPng(string path)
+    internal static byte[] ReadPng(string path, int limit = 5 * 1024 * 1024)
     {
         using var stream = File.OpenRead(path);
-        if (stream.Length is 0 or > 5 * 1024 * 1024)
-            throw new IOException("The PNG is empty or exceeds 5 MiB.");
+        if (stream.Length == 0 || stream.Length > limit)
+            throw new IOException($"The PNG is empty or exceeds the {limit:N0}-byte limit.");
         byte[] bytes = new byte[(int)stream.Length];
         stream.ReadExactly(bytes);
         return bytes;

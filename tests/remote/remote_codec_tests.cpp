@@ -100,14 +100,32 @@ TEST_CASE("remote codec: look captures correlate both PNGs and the settled proje
   const auto decoded = codec::decodeRenderLookCaptureRequest(wire);
   REQUIRE(decoded.has_value());
   CHECK(codec::encode(*decoded) == wire);
+  CHECK(decoded->extent == c::RenderLookExtent{});
+  CHECK(wire.find("extent") == nullptr);
+  request.extent = {800, 600};
+  const auto custom = overTheWire(codec::encode(request));
+  REQUIRE(codec::decodeRenderLookCaptureRequest(custom));
+  CHECK(codec::decodeRenderLookCaptureRequest(custom)->extent == request.extent);
+  for (const auto* extent : {"null", R"({"width":800})", R"({"width":800,"height":600,"x":0})",
+                             R"({"width":800.1,"height":600})", R"({"width":800,"height":"600"})",
+                             R"({"width":1920,"height":1081})", R"({"width":18446744073709551615,"height":600})"}) {
+    auto bad = wire;
+    const auto parsed = json::parse(extent);
+    REQUIRE(parsed.isOk());
+    bad.set("extent", parsed.value());
+    CHECK_FALSE(codec::decodeRenderLookCaptureRequest(bad));
+  }
   c::FrameData data;
   data.view = camera.worldMatrix;
   data.projection = camera.worldMatrix;
   data.exposureCompensationEv = 1.0f;
   c::RenderLookCapturedPair pair{request.document, request.apply, request.generation, guard.basis.activeCamera,
-      {data, data}, {{{request.paths[0], 960, 540}, {request.paths[1], 960, 540}}}, request.looks};
+      {data, data}, {{{request.paths[0], 800, 600}, {request.paths[1], 800, 600}}}, request.looks};
   auto answer = overTheWire(codec::encode(pair));
   CHECK(codec::decodeRenderLookCapturedPair(answer, request).has_value());
+  pair.images[1].width = 960;
+  CHECK_FALSE(codec::decodeRenderLookCapturedPair(codec::encode(pair), request));
+  pair.images[1].width = 800;
   pair.images[0].path = request.paths[1];
   CHECK_FALSE(codec::decodeRenderLookCapturedPair(codec::encode(pair), request));
   answer.set("generation", json::Value::number(std::uint64_t{5}));

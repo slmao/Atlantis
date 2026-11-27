@@ -434,7 +434,11 @@ public sealed class RemoteControl
     public RenderLookCaptureResult CaptureRenderLook(RenderLookCaptureRequest request)
     {
         const string method = "control.captureRenderLook";
-        if (!Status().SupportsRenderLookCapture) return new(null, RenderLookCaptureError.Unsupported);
+        if (!request.Extent.IsValid) return new(null, RenderLookCaptureError.InvalidRequest);
+        var status = Status();
+        if (!status.SupportsRenderLookCapture ||
+            (request.Extent != RenderLookExtent.Default && !status.SupportsRenderLookCaptureExtent))
+            return new(null, RenderLookCaptureError.Unsupported);
         var outcome = _session.InBand<RenderLookCapturedPair, RenderLookCaptureError>(
             _session.Call(method, Codec.Encode(request)), method,
             value => Codec.DecodeRenderLookCapturedPair(value, request), Codec.DecodeRenderLookCaptureError);

@@ -1,10 +1,10 @@
 # Plan 0147 — Scene View Bookmarks and Reference Comparison V1
 
 - **Spec:** [Spec 0147](../specs/0147-scene-view-bookmarks.md)
-- **ADR:** [ADR-0193](../adr/0193-bounded-render-look-capture-extent.md) (Proposed)
-- **Status:** Draft
+- **ADR:** [ADR-0193](../adr/0193-bounded-render-look-capture-extent.md) (Accepted)
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending for this Spec, Plan and ADR.
+- **Joint Human Review:** Maintainer approved Spec/Plan 0147, J1–J4 and ADR-0193 at 517e597c and authorized S2–S4 after merge. [Approval record](https://github.com/slmao/Atlantis/pull/457#issuecomment-7218716662). The maintainer merged #457 as 4f6960fa.
 
 ## Objective and milestones
 

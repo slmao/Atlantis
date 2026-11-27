@@ -32,6 +32,7 @@ struct RuntimeStatus {
   // scene reload that swapped; 0 for the World the Runtime started with.
   std::uint64_t sceneGeneration = 0;
   bool supportsRenderLookCapture = false;
+  bool supportsRenderLookCaptureExtent = false;
   friend bool operator==(const RuntimeStatus&, const RuntimeStatus&) = default;
 };
 
@@ -122,6 +123,21 @@ enum class RenderLookCaptureError { Unsupported, Busy, InvalidRequest, StaleProj
   }
   return "CaptureFailed";
 }
+inline constexpr std::uint32_t kRenderLookCaptureWidth = 960;
+inline constexpr std::uint32_t kRenderLookCaptureHeight = 540;
+
+struct RenderLookExtent {
+  std::uint32_t width = kRenderLookCaptureWidth;
+  std::uint32_t height = kRenderLookCaptureHeight;
+
+  [[nodiscard]] constexpr bool valid() const noexcept {
+    return width >= 128 && height >= 128 && width <= 1920 && height <= 1920 &&
+           static_cast<std::uint64_t>(width) * height <= 2073600;
+  }
+
+  friend constexpr bool operator==(const RenderLookExtent&, const RenderLookExtent&) = default;
+};
+
 struct RenderLookCaptureRequest {
   authoring::DocumentToken document;
   authoring::ApplyId apply;
@@ -130,9 +146,8 @@ struct RenderLookCaptureRequest {
   ViewportCamera camera;
   std::array<std::vector<authoring::SetProperty>, 2> looks;
   std::array<std::string, 2> paths;
+  RenderLookExtent extent{};
 };
-inline constexpr std::uint32_t kRenderLookCaptureWidth = 960;
-inline constexpr std::uint32_t kRenderLookCaptureHeight = 540;
 struct RenderLookCapturedPair {
   authoring::DocumentToken document;
   authoring::ApplyId apply;

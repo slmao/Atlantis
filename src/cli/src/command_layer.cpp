@@ -1603,7 +1603,8 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
     const std::string command = "runtime capture-look";
     const auto malformed = [&] { return failed(command, usageError("runtime capture-look <manifest>")); };
     if (t.size() != 3) return malformed();
-    if (control_ == nullptr || !control_->status().supportsRenderLookCapture)
+    const auto capabilities = control_ != nullptr ? control_->status() : connection::RuntimeStatus{};
+    if (!capabilities.supportsRenderLookCapture)
       return failed(command, plainError("Unsupported", ErrorCategory::Refused, "render look capture is unavailable"));
     std::ifstream file(std::string(t[2]), std::ios::binary | std::ios::ate);
     const auto size = file.tellg();
@@ -1636,9 +1637,23 @@ Reply CommandLayer::run(std::span<const std::string_view> t, std::string_view li
       if (!row.empty() && row.back() == '\r') row.pop_back();
       return true;
     };
+    if (!read()) return malformed();
+    const auto extent = tokenize(row);
+    if (!extent.empty() && extent[0] == "extent") {
+      const auto dimension = [](std::string_view token, std::uint32_t& output) {
+        const auto end = token.data() + token.size();
+        const auto result = std::from_chars(token.data(), end, output);
+        return result.ec == std::errc{} && result.ptr == end;
+      };
+      if (extent.size() != 3 || !dimension(extent[1], request.extent.width) ||
+          !dimension(extent[2], request.extent.height) || !request.extent.valid()) return malformed();
+      if (request.extent != connection::RenderLookExtent{} && !capabilities.supportsRenderLookCaptureExtent)
+        return failed(command, plainError("Unsupported", ErrorCategory::Refused, "update Runtime for this capture extent"));
+      if (!read()) return malformed();
+    }
     const std::size_t count = 8 + 3 * request.basis.lightRoster.size();
     for (std::size_t i = 0; i < request.looks.size(); ++i) {
-      if (!read() || !row.starts_with("output ") || row.size() <= 7) return malformed();
+      if ((i != 0 && !read()) || !row.starts_with("output ") || row.size() <= 7) return malformed();
       request.paths[i] = row.substr(7);
       for (std::size_t field = 0; field < count; ++field) {
         if (!read()) return malformed();

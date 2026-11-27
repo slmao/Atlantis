@@ -141,6 +141,7 @@ void RuntimeControlHost::stop() {
 connection::RuntimeStatus RuntimeControlHost::status() {
   return connection::RuntimeStatus{paused_, frame_, target_.scene,
                                    target_.sceneGeneration ? target_.sceneGeneration() : 0,
+                                   static_cast<bool>(target_.captureRenderLook),
                                    static_cast<bool>(target_.captureRenderLook)};
 }
 

@@ -500,6 +500,7 @@ int main(int argc, char** argv) {
       namespace ac = atlantis::connection::authoring;
       using E = atlantis::connection::RenderLookCaptureError;
       using R = atlantis::connection::RenderLookCaptureResult;
+      if (!request.extent.valid()) return R::Err(E::InvalidRequest);
       auto* session = authoring.session();
       if (!session) return R::Err(E::Unavailable);
       const auto failure = [](ac::Error error) {

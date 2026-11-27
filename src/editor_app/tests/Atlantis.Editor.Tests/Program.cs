@@ -43,7 +43,7 @@ public static partial class Program
         bool hierarchyFilterRace = false, postProcessingRace = false, postProcessingLegacy = false;
         bool staticGroupReceipt = false, batchRenameReceipts = false;
         string? bistroReferenceReport = null, sceneStatisticsReport = null, batchRenameReport = null;
-        string? meshThumbnailReport = null;
+        string? meshThumbnailReport = null, bookmarkProjectionReport = null;
         string? assetDropReceipt = null, tasksReport = null, recoveryReport = null, layoutReport = null, placementReport = null,
             staticGroupReport = null, bistroTuningReport = null, bistroLocatorReport = null, materialBindingReport = null;
         for (int i = 0; i < args.Length; ++i)
@@ -72,6 +72,7 @@ public static partial class Program
             else if (args[i] == "--scene-statistics-ui" && i + 1 < args.Length) sceneStatisticsReport = args[++i];
             else if (args[i] == "--mesh-thumbnail-ui" && i + 1 < args.Length) meshThumbnailReport = args[++i];
             else if (args[i] == "--bistro-reference-ui" && i + 1 < args.Length) bistroReferenceReport = args[++i];
+            else if (args[i] == "--bookmark-projection-race" && i + 1 < args.Length) bookmarkProjectionReport = args[++i];
             else if (args[i] == "--runtime" && i + 1 < args.Length) runtime = args[++i];
             else if (args[i] == "--cli" && i + 1 < args.Length) cli = args[++i];
             else if (args[i] == "--scene" && i + 1 < args.Length) scene = args[++i];
@@ -104,6 +105,8 @@ public static partial class Program
             return runtime is null ? Usage() : RunMeshThumbnailUi(runtime, scene, meshThumbnailReport);
         if (bistroReferenceReport is not null)
             return runtime is null ? Usage() : RunBistroReferenceUi(runtime, scene, bistroReferenceReport);
+        if (bookmarkProjectionReport is not null)
+            return runtime is null ? Usage() : RunBistroReferenceUi(runtime, scene, bookmarkProjectionReport, bookmarkProjection: true);
         if (assetDropReceipt is not null)
             return runtime is null ? Usage() : RunAssetDragReceipts(runtime, scene, assetDropReceipt);
         if (sceneObjectUi)
@@ -222,6 +225,7 @@ public static partial class Program
         Console.Error.WriteLine("       Atlantis.Editor.Tests --guide-captures --runtime <exe> [--scene <name>]");
         Console.Error.WriteLine("       Atlantis.Editor.Tests --hierarchy-filter-race --runtime <exe> [--scene <name>]");
         Console.Error.WriteLine("       Atlantis.Editor.Tests --bistro-locator <evidence dir> --runtime <exe> --scene <name>");
+        Console.Error.WriteLine("       Atlantis.Editor.Tests --bookmark-projection-race <evidence dir> --runtime <exe> --scene <manual scene>");
         return 2;
     }
 

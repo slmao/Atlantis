@@ -1,9 +1,9 @@
 # ADR 0193: Bounded Render Look Capture Extent
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-27
 - **Deciders:** Atlantis maintainer
-- **Acceptance:** Pending joint review.
+- **Acceptance:** [Joint approval of 517e597c](https://github.com/slmao/Atlantis/pull/457#issuecomment-7218716662).
 - **Related Spec:** [Spec 0147](../specs/0147-scene-view-bookmarks.md)
 - **Supplements:** [ADR-0191](0191-render-look-preview-and-adoption.md), decision 2
 

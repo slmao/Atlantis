@@ -526,6 +526,7 @@ public static partial class Codec
         var value = JsonValue.NewObject().Set("paused", JsonValue.Bool(status.Paused)).Set("frame", JsonValue.Number(status.Frame))
             .Set("scene", Encode(status.Scene)).Set("sceneGeneration", JsonValue.Number(status.SceneGeneration));
         if (status.SupportsRenderLookCapture) value.Set("supportsRenderLookCapture", JsonValue.Bool(true));
+        if (status.SupportsRenderLookCaptureExtent) value.Set("supportsRenderLookCaptureExtent", JsonValue.Bool(true));
         return value;
     }
 
@@ -545,7 +546,8 @@ public static partial class Codec
         }
         return new RuntimeStatus(paused.AsBool, f, s, generation)
         {
-            SupportsRenderLookCapture = value.Find("supportsRenderLookCapture") is { IsBool: true, AsBool: true }
+            SupportsRenderLookCapture = value.Find("supportsRenderLookCapture") is { IsBool: true, AsBool: true },
+            SupportsRenderLookCaptureExtent = value.Find("supportsRenderLookCaptureExtent") is { IsBool: true, AsBool: true }
         };
     }
 
@@ -558,15 +560,29 @@ public static partial class Codec
             foreach (var property in variant) values.Push(Encode(property));
             looks.Push(values);
         }
-        return JsonValue.NewObject().Set("guard", Encode(request.Guard))
+        var encoded = JsonValue.NewObject().Set("guard", Encode(request.Guard))
             .Set("applyId", JsonValue.String(request.Apply.ToString())).Set("generation", JsonValue.Number(request.Generation))
             .Set("camera", Encode(request.Camera)).Set("looks", looks)
             .Set("outputs", JsonValue.NewArray().Push(JsonValue.String(request.OutputA)).Push(JsonValue.String(request.OutputB)));
+        if (request.Extent != RenderLookExtent.Default)
+            encoded.Set("extent", JsonValue.NewObject().Set("width", JsonValue.Number((ulong)request.Extent.Width))
+                .Set("height", JsonValue.Number((ulong)request.Extent.Height)));
+        return encoded;
     }
 
     public static RenderLookCaptureRequest? DecodeRenderLookCaptureRequest(JsonValue request)
     {
-        if (!Exact(request, 6) || request.Find("guard") is not { } guardValue ||
+        var extent = request.Find("extent");
+        var size = RenderLookExtent.Default;
+        if (extent is not null)
+        {
+            if (!Exact(extent, 2) || extent.Find("width") is not { } w || extent.Find("height") is not { } h ||
+                DecodeUInt64(w) is not ulong width || DecodeUInt64(h) is not ulong height || width > 1920 || height > 1920)
+                return null;
+            size = new((uint)width, (uint)height);
+            if (!size.IsValid) return null;
+        }
+        if (!Exact(request, extent is null ? 6 : 7) || request.Find("guard") is not { } guardValue ||
             DecodeAuthoringCommand(guardValue) is not A.RequireRenderLookDocument guard ||
             request.Find("applyId") is not { IsString: true } applyValue ||
             !A.ApplyId.TryParse(applyValue.AsString, out var apply) ||
@@ -588,7 +604,7 @@ public static partial class Codec
             }
         }
         return new RenderLookCaptureRequest(guard, apply, generation, camera, variants[0], variants[1],
-            outputs.Items[0].AsString, outputs.Items[1].AsString);
+            outputs.Items[0].AsString, outputs.Items[1].AsString) { Extent = size };
     }
 
     public static RenderLookCapturedPair? DecodeRenderLookCapturedPair(JsonValue result, RenderLookCaptureRequest request)
@@ -604,12 +620,12 @@ public static partial class Codec
         return a is not null && b is not null ? new RenderLookCapturedPair(a, b,
             request.Guard.ExpectedDocument, request.Apply, request.Generation, request.Guard.Basis.ActiveCamera) : null;
 
-        static FrameReport? Variant(JsonValue row, string role, string path, IReadOnlyList<A.SetProperty> expected)
+        FrameReport? Variant(JsonValue row, string role, string path, IReadOnlyList<A.SetProperty> expected)
         {
             if (!Exact(row, 3) || row.Find("role") is not { IsString: true } side || side.AsString != role ||
                 row.Find("capture") is not { } capture ||
                 DecodeFrameReport(capture) is not { Frame: 0, Applied: false, Image: { } image } report ||
-                image.Path != path || image.Width != RenderLookCapturedPair.Width || image.Height != RenderLookCapturedPair.Height ||
+                image.Path != path || image.Width != request.Extent.Width || image.Height != request.Extent.Height ||
                 row.Find("values") is not { IsArray: true } values || values.Items.Count != expected.Count) return null;
             return values.Items.Select(DecodeAuthoringCommand).SequenceEqual(expected) ? report : null;
         }

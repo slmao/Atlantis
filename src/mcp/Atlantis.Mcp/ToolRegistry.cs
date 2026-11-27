@@ -624,9 +624,10 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
         if (status.Find("error") is { } failure) return Forward(failure, true);
         if (status.Find("result") is not { } statusValue || Codec.DecodeStatus(statusValue) is not { } runtime)
             return Error("ProtocolError: malformed control status.");
-        if (!runtime.SupportsRenderLookCapture)
+        if (!runtime.SupportsRenderLookCapture ||
+            (request.Extent != RenderLookExtent.Default && !runtime.SupportsRenderLookCaptureExtent))
             return Forward(JsonValue.NewObject().Set("err", JsonValue.String("Unsupported")), true);
-        var response = session.Request("control.captureRenderLook", parameters);
+        var response = session.Request("control.captureRenderLook", Codec.Encode(request));
         if (response.Find("error") is { } error) return Forward(error, true);
         if (response.Find("result") is not { IsObject: true } result || result.Members.Count != 1)
             return Error("ProtocolError: malformed render look capture result.");
