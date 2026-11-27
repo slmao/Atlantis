@@ -406,3 +406,9 @@ if(ANDROID)
       android
   )
 endif()
+
+if(WIN32)
+  target_compile_definitions(atlantis_runtime PRIVATE
+    ATLANTIS_RUNTIME_BASE_COLOR_SHADER_DIR="${ATLANTIS_base_color_diagnostic_SHADER_OUTPUT_DIR}")
+  add_dependencies(atlantis_runtime base_color_diagnostic_shaders)
+endif()

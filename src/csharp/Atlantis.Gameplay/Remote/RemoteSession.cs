@@ -431,6 +431,25 @@ public sealed class RemoteControl
     public RuntimeStatus Status() =>
         Codec.DecodeStatus(_session.Call("control.status")) ?? throw _session.Malformed("control.status");
 
+    public MaterialDiagnosticResult CaptureMaterialDiagnostic(MaterialDiagnosticRequest request)
+    {
+        const string method = "control.captureMaterialDiagnostic";
+        if (!request.Extent.IsValid) return new(null, RenderLookCaptureError.InvalidRequest);
+        if (!Status().SupportsMaterialDiagnosticCapture) return new(null, RenderLookCaptureError.Unsupported);
+        try
+        {
+            var outcome = _session.InBand<MaterialDiagnosticPair, RenderLookCaptureError>(
+                _session.Call(method, Codec.Encode(request)), method,
+                value => Codec.DecodeMaterialDiagnosticPair(value, request), Codec.DecodeRenderLookCaptureError);
+            return outcome.IsOk ? new(outcome.Value, null) : new(null, outcome.Error);
+        }
+        catch (RemoteException error)
+        {
+            throw new RemoteException(error.Error,
+                "Capture outcome unknown. Verify both output paths and the current projection before retrying. " + error.Message);
+        }
+    }
+
     public RenderLookCaptureResult CaptureRenderLook(RenderLookCaptureRequest request)
     {
         const string method = "control.captureRenderLook";

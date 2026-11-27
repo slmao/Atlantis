@@ -1092,6 +1092,7 @@ Value encode(const connection::RuntimeStatus& status) {
   out.set("sceneGeneration", Value::number(status.sceneGeneration));  // Plan 0065 P4 (ADR-0131 D5)
   if (status.supportsRenderLookCapture) out.set("supportsRenderLookCapture", Value::boolean(true));
   if (status.supportsRenderLookCaptureExtent) out.set("supportsRenderLookCaptureExtent", Value::boolean(true));
+  if (status.supportsMaterialDiagnosticCapture) out.set("supportsMaterialDiagnosticCapture", Value::boolean(true));
   return out;
 }
 
@@ -1112,9 +1113,136 @@ std::optional<connection::RuntimeStatus> decodeStatus(const Value& value) {
   }
   const auto* renderLook = value.find("supportsRenderLookCapture");
   const auto* extent = value.find("supportsRenderLookCaptureExtent");
+  const auto* diagnostic = value.find("supportsMaterialDiagnosticCapture");
   return connection::RuntimeStatus{paused->asBool(), *f, *s, generation,
                                    renderLook && renderLook->isBool() && renderLook->asBool(),
-                                   extent && extent->isBool() && extent->asBool()};
+                                   extent && extent->isBool() && extent->asBool(),
+                                   diagnostic && diagnostic->isBool() && diagnostic->asBool()};
+}
+
+namespace {
+
+Value encodeDiagnosticTarget(const connection::MaterialDiagnosticTarget& target) {
+  Value result = Value::object();
+  result.set("entity", encodeEntity(target.entity));
+  result.set("mesh", encodeAsset(target.mesh));
+  result.set("material", encodeAsset(target.material));
+  return result;
+}
+
+}  // namespace
+
+Value encode(const connection::MaterialDiagnosticRequest& request) {
+  Value out = Value::object(), extent = Value::object(), outputs = Value::array();
+  out.set("document", encode(request.document));
+  out.set("applyId", Value::string(authoring::toString(request.apply)));
+  out.set("generation", Value::number(request.generation));
+  out.set("camera", encode(request.camera));
+  extent.set("width", Value::number(static_cast<std::uint64_t>(request.extent.width)));
+  extent.set("height", Value::number(static_cast<std::uint64_t>(request.extent.height)));
+  out.set("extent", std::move(extent));
+  out.set("target", encodeDiagnosticTarget(request.target));
+  for (const auto& path : request.paths) outputs.push(Value::string(path));
+  out.set("outputs", std::move(outputs));
+  if (request.viewport) out.set("viewport", encode(*request.viewport));
+  return out;
+}
+
+std::optional<connection::MaterialDiagnosticRequest> decodeMaterialDiagnosticRequest(const Value& value) {
+  const auto* viewport = value.find("viewport");
+  if (!value.isObject() || value.asObject().size() != (viewport ? 8u : 7u)) return {};
+  const auto* document = value.find("document");
+  const auto* apply = value.find("applyId");
+  const auto* generation = value.find("generation");
+  const auto* camera = value.find("camera");
+  const auto* extent = value.find("extent");
+  const auto* target = value.find("target");
+  const auto* outputs = value.find("outputs");
+  if (!document || !apply || !apply->isString() || !generation || !camera || !extent ||
+      !extent->isObject() || extent->asObject().size() != 2 || !target ||
+      !target->isObject() || target->asObject().size() != 3 || !outputs ||
+      !outputs->isArray() || outputs->asArray().size() != 2) return {};
+  const auto d = decodeDocumentToken(*document);
+  const auto a = authoring::parseApplyId(apply->asString());
+  const auto g = decodeUInt64(*generation);
+  const auto c = decodeViewportCamera(*camera);
+  const auto* w = extent->find("width");
+  const auto* h = extent->find("height");
+  const auto width = w ? decodeUInt64(*w) : std::nullopt;
+  const auto height = h ? decodeUInt64(*h) : std::nullopt;
+  const auto* entity = target->find("entity");
+  const auto* mesh = target->find("mesh");
+  const auto* material = target->find("material");
+  const auto e = entity ? decodeEntity(*entity) : std::nullopt;
+  const auto m = mesh ? decodeAsset(*mesh) : std::nullopt;
+  const auto materialId = material ? decodeAsset(*material) : std::nullopt;
+  const auto stamp = viewport ? decodeViewportStamp(*viewport) : std::nullopt;
+  if (!d || a.isErr() || !g || !c || !width || !height || *width > 1920 || *height > 1920 ||
+      !e || *e == EntityGuid{} || !m || *m == AssetGuid{} || !materialId || *materialId == AssetGuid{} ||
+      (viewport && (!stamp || stamp->sceneGeneration != *g))) return {};
+  connection::RenderLookExtent size{static_cast<std::uint32_t>(*width), static_cast<std::uint32_t>(*height)};
+  const auto& paths = outputs->asArray();
+  if (!size.valid() || !paths[0].isString() || !paths[1].isString()) return {};
+  return connection::MaterialDiagnosticRequest{*d, a.value(), *g, *c, size, {*e, *m, *materialId},
+      {paths[0].asString(), paths[1].asString()}, stamp};
+}
+
+Value encode(const connection::MaterialDiagnosticPair& pair) {
+  Value out = Value::object(), captures = Value::array();
+  out.set("document", encode(pair.document));
+  out.set("applyId", Value::string(authoring::toString(pair.apply)));
+  out.set("generation", Value::number(pair.generation));
+  out.set("target", encodeDiagnosticTarget(pair.target));
+  out.set("texture", encodeAsset(pair.texture));
+  out.set("factor", encodeFloats(pair.factor));
+  for (std::size_t i = 0; i < pair.frames.size(); ++i) {
+    Value entry = Value::object();
+    entry.set("role", Value::string(i == 0 ? "normal" : "baseColor"));
+    entry.set("capture", encode(connection::FrameReport{0, false, pair.frames[i], pair.images[i]}));
+    captures.push(std::move(entry));
+  }
+  out.set("captures", std::move(captures));
+  return out;
+}
+
+std::optional<connection::MaterialDiagnosticPair> decodeMaterialDiagnosticPair(
+    const Value& value, const connection::MaterialDiagnosticRequest& request) {
+  if (!value.isObject() || value.asObject().size() != 7) return {};
+  const auto* document = value.find("document");
+  const auto* apply = value.find("applyId");
+  const auto* generation = value.find("generation");
+  const auto* target = value.find("target");
+  const auto* texture = value.find("texture");
+  const auto* factor = value.find("factor");
+  const auto* captures = value.find("captures");
+  const auto t = texture ? decodeAsset(*texture) : std::nullopt;
+  if (!document || decodeDocumentToken(*document) != request.document ||
+      !apply || !apply->isString() || apply->asString() != authoring::toString(request.apply) ||
+      !generation || decodeUInt64(*generation) != request.generation ||
+      !target || *target != encodeDiagnosticTarget(request.target) || !t || *t == AssetGuid{} ||
+      !factor || !factor->isArray() || factor->asArray().size() != 3 ||
+      !captures || !captures->isArray() || captures->asArray().size() != 2) return {};
+  connection::MaterialDiagnosticPair result{request.document, request.apply, request.generation, request.target, *t, {}, {}, {}};
+  for (std::size_t i = 0; i < result.factor.size(); ++i) {
+    const auto component = decodeFloat(factor->asArray()[i]);
+    if (!component || !std::isfinite(*component) || *component < 0 || *component > 1) return {};
+    result.factor[i] = *component;
+  }
+  for (std::size_t i = 0; i < result.frames.size(); ++i) {
+    const auto& entry = captures->asArray()[i];
+    const auto* role = entry.find("role");
+    const auto* capture = entry.find("capture");
+    if (!entry.isObject() || entry.asObject().size() != 2 || !role || !role->isString() ||
+        role->asString() != (i == 0 ? "normal" : "baseColor") || !capture) return {};
+    auto report = decodeFrameReport(*capture);
+    if (!report || report->frame != 0 || report->applied || !report->image ||
+        report->image->path != request.paths[i] || report->image->width != request.extent.width ||
+        report->image->height != request.extent.height) return {};
+    result.frames[i] = std::move(report->data);
+    result.images[i] = std::move(*report->image);
+  }
+  if (result.frames[0].view != result.frames[1].view || result.frames[0].projection != result.frames[1].projection) return {};
+  return result;
 }
 
 Value encode(const connection::RenderLookCaptureRequest& request) {

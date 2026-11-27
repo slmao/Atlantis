@@ -166,6 +166,11 @@ class Renderer {
                  const std::optional<std::array<float, 3>>& cameraWorldPosition = std::nullopt,
                  const BloomInput* bloom = nullptr);
 
+  // Records a capture-only color and depth pass, leaving color ready for readback.
+  // The caller owns and settles the command list and its bindings (ADR-0194).
+  [[nodiscard]] bool drawBaseColorDiagnostic(rhi::CommandList& commandList, rhi::RenderTarget& target,
+      rhi::Texture& depth, rhi::Buffer& uniforms, rhi::Pipeline& pipeline, const DrawItem& item);
+
   // Plan 0056 P5 (ADR-0108 D3; defined in ui_overlay.cpp): records one
   // RenderGraph pass, "ui_overlay", that clears `target` and draws `list`'s
   // commands into it in order -- each scissored to its clip and sampling the

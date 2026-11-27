@@ -33,6 +33,7 @@ struct RuntimeStatus {
   std::uint64_t sceneGeneration = 0;
   bool supportsRenderLookCapture = false;
   bool supportsRenderLookCaptureExtent = false;
+  bool supportsMaterialDiagnosticCapture = false;
   friend bool operator==(const RuntimeStatus&, const RuntimeStatus&) = default;
 };
 
@@ -275,6 +276,37 @@ struct ViewportStamp {
   friend bool operator==(const ViewportStamp&, const ViewportStamp&) = default;
 };
 
+struct MaterialDiagnosticTarget {
+  authoring::EntityGuid entity;
+  asset_system::AssetGuid mesh;
+  asset_system::AssetGuid material;
+  friend bool operator==(const MaterialDiagnosticTarget&, const MaterialDiagnosticTarget&) = default;
+};
+
+struct MaterialDiagnosticRequest {
+  authoring::DocumentToken document;
+  authoring::ApplyId apply;
+  std::uint64_t generation;
+  ViewportCamera camera;
+  RenderLookExtent extent;
+  MaterialDiagnosticTarget target;
+  std::array<std::string, 2> paths;
+  std::optional<ViewportStamp> viewport;
+};
+
+struct MaterialDiagnosticPair {
+  authoring::DocumentToken document;
+  authoring::ApplyId apply;
+  std::uint64_t generation;
+  MaterialDiagnosticTarget target;
+  asset_system::AssetGuid texture;
+  std::array<float, 3> factor;
+  std::array<FrameData, 2> frames;
+  std::array<CapturedImage, 2> images;
+};
+
+using MaterialDiagnosticResult = Result<MaterialDiagnosticPair, RenderLookCaptureError>;
+
 inline constexpr std::size_t kMaterialBindingInstances = 8192;
 inline constexpr std::size_t kMaterialBindingTriangles = 262144;
 inline constexpr std::string_view kMaterialBindingSlot = "Renderable.materialAsset";
@@ -453,6 +485,9 @@ class RuntimeControl {
   // precedence; a camera the frame cannot use is ignored (ADR-0123 D1). Not
   // World state: no event reports it.
   virtual void setViewportCamera(std::optional<ViewportCamera> camera) = 0;
+  [[nodiscard]] virtual MaterialDiagnosticResult captureMaterialDiagnostic(const MaterialDiagnosticRequest&) {
+    return MaterialDiagnosticResult::Err(RenderLookCaptureError::Unsupported);
+  }
   [[nodiscard]] virtual RenderLookCaptureResult captureRenderLook(const RenderLookCaptureRequest&) {
     return RenderLookCaptureResult::Err(RenderLookCaptureError::Unsupported);
   }

@@ -132,6 +132,41 @@ TEST_CASE("remote codec: look captures correlate both PNGs and the settled proje
   CHECK_FALSE(codec::decodeRenderLookCapturedPair(answer, request));
 }
 
+TEST_CASE("remote codec: material diagnostic pair guards target and output provenance", "[remote][codec][material-diagnostic]") {
+  namespace c = atlantis::connection;
+  c::ViewportCamera camera{{1,0,0,0,0,1,0,0,0,0,1,0,0,0,2,1}, 1.0f, 0.1f, 200.0f};
+  const auto asset = [](int id) { return atlantis::asset_system::AssetGuid{entity(id).bytes}; };
+  const c::MaterialDiagnosticRequest request{{entity(1), 7}, {entity(2).bytes}, 4, camera,
+      {800, 600}, {entity(3), asset(4), asset(5)}, {"D:/normal.png", "D:/base.png"}, c::ViewportStamp{4, 2}};
+  const auto wire = overTheWire(codec::encode(request));
+  const auto decoded = codec::decodeMaterialDiagnosticRequest(wire);
+  REQUIRE(decoded);
+  CHECK(codec::encode(*decoded) == wire);
+  auto invalid = wire;
+  invalid.set("extent", json::parse(R"({"width":1920,"height":1081})").value());
+  CHECK_FALSE(codec::decodeMaterialDiagnosticRequest(invalid));
+  invalid = wire;
+  invalid.set("viewport", codec::encode(c::ViewportStamp{3, 2}));
+  CHECK_FALSE(codec::decodeMaterialDiagnosticRequest(invalid));
+
+  c::FrameData frame;
+  frame.view = camera.worldMatrix;
+  frame.projection = camera.worldMatrix;
+  c::MaterialDiagnosticPair pair{request.document, request.apply, request.generation, request.target,
+      asset(6), {0.5f, 0.3f, 0.1f}, {frame, frame},
+      {{{request.paths[0], 800, 600}, {request.paths[1], 800, 600}}}};
+  CHECK(codec::decodeMaterialDiagnosticPair(overTheWire(codec::encode(pair)), request));
+  auto mismatch = pair;
+  mismatch.frames[1].projection[0] = 2;
+  CHECK_FALSE(codec::decodeMaterialDiagnosticPair(codec::encode(mismatch), request));
+  mismatch = pair;
+  mismatch.target.material = asset(7);
+  CHECK_FALSE(codec::decodeMaterialDiagnosticPair(codec::encode(mismatch), request));
+  mismatch = pair;
+  mismatch.images[1].height = 540;
+  CHECK_FALSE(codec::decodeMaterialDiagnosticPair(codec::encode(mismatch), request));
+}
+
 TEST_CASE("codec: every PropertyValue alternative round-trips", "[remote][codec]") {
   const std::vector<access::PropertyValue> values = {
       access::PropertyValue(std::uint64_t{0}),

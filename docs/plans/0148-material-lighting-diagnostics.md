@@ -1,10 +1,10 @@
 # Plan 0148 — Material and Lighting Diagnostics V1
 
 - **Spec:** [Spec 0148](../specs/0148-material-lighting-diagnostics.md)
-- **ADR:** [ADR-0194](../adr/0194-isolated-base-color-diagnostic-capture.md) (Proposed)
-- **Status:** Draft
+- **ADR:** [ADR-0194](../adr/0194-isolated-base-color-diagnostic-capture.md) (Accepted)
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending for Spec and Plan 0148 and implementation authorization.
+- **Joint Human Review:** [Maintainer joint approval of 5144fe7a](https://github.com/slmao/Atlantis/pull/459#issuecomment-7223673579) on 2026-11-28 approves Spec/Plan 0148, J1–J4 and S2–S4. Design merged by the maintainer as b1f14f08.
 
 ## Objective
 

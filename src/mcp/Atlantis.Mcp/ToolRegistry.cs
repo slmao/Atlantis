@@ -210,6 +210,9 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
         Declare("control.pick_material_binding", "control.pickMaterialBinding",
             "Read the single explicit material binding at the nearest unambiguous opaque surface.", ControlModel,
             ToolSchemas.MaterialBindingParameters()),
+        Declare("control.capture_material_diagnostic", "control.captureMaterialDiagnostic",
+            "Capture normal shading and isolated base color for one verified material binding.", ControlModel,
+            ToolSchemas.MaterialDiagnosticCapture()),
         Declare("control.capture_render_look", "control.captureRenderLook",
             "Capture two complete render looks at one fixed camera in the settled projection.", ControlModel,
             ToolSchemas.RenderLookCapture()),
@@ -300,6 +303,7 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
             if (mapping.Method is "control.viewportVisibility" or "control.setViewportVisibility" or "control.pickViewport")
                 return ViewportPolicyCall(mapping.Method, wireParameters);
             if (mapping.Method == "control.pickMaterialBinding") return PickMaterialBinding(wireParameters);
+            if (mapping.Method == "control.captureMaterialDiagnostic") return CaptureMaterialDiagnostic(wireParameters);
             if (mapping.Method == "control.captureRenderLook") return CaptureRenderLook(wireParameters);
             if (mapping.Method == "control.pickAlignmentFaces") return PickAlignmentFaces(wireParameters);
             if (mapping.Method == "control.viewportNavigation") return ViewportNavigation(wireParameters);
@@ -614,6 +618,29 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
             return Error("ProtocolError: malformed material binding reply");
         return response.Find("result") is { } result ? Forward(result, decoded.Error is not null)
             : Error(decoded.Error?.ToString() ?? "ProtocolError: missing material binding reply");
+    }
+
+    private CallToolResult CaptureMaterialDiagnostic(JsonValue parameters)
+    {
+        if (Codec.DecodeMaterialDiagnosticRequest(parameters) is not { } request)
+            return Error("InvalidArguments: expected a verified binding and bounded capture.");
+        var status = session.Request("control.status", JsonValue.NewObject());
+        if (status.Find("error") is { } failure) return Forward(failure, true);
+        if (status.Find("result") is not { } value || Codec.DecodeStatus(value) is not { } runtime)
+            return Error("ProtocolError: malformed control status.");
+        if (!runtime.SupportsMaterialDiagnosticCapture)
+            return Forward(JsonValue.NewObject().Set("err", JsonValue.String("Unsupported")), true);
+        var response = session.Request("control.captureMaterialDiagnostic", Codec.Encode(request));
+        if (response.Find("error") is { } error)
+            return Forward(JsonValue.NewObject().Set("error", error)
+                .Set("guidance", JsonValue.String("Capture outcome unknown. Verify both output paths before retrying.")), true);
+        if (response.Find("result") is not { IsObject: true } result || result.Members.Count != 1)
+            return Error("ProtocolError: capture outcome unknown. Verify both output paths before retrying.");
+        if (result.Find("err") is { } refusal && Codec.DecodeRenderLookCaptureError(refusal) is not null)
+            return Forward(result, true);
+        if (result.Find("ok") is { } pair && Codec.DecodeMaterialDiagnosticPair(pair, request) is not null)
+            return Forward(result, false);
+        return Error("ProtocolError: capture outcome unknown. Verify both output paths before retrying.");
     }
 
     private CallToolResult CaptureRenderLook(JsonValue parameters)

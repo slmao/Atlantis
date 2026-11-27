@@ -1,12 +1,12 @@
 # Spec 0148 — Material and Lighting Diagnostics V1
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-28
 - **Design baseline:** `4a6dedde` on `main`, maintainer merge of [PR #458](https://github.com/slmao/Atlantis/pull/458)
 - **Related Plan:** [Plan 0148](../plans/0148-material-lighting-diagnostics.md)
-- **Related ADR:** [ADR-0194](../adr/0194-isolated-base-color-diagnostic-capture.md) (Proposed)
-- **Approval:** Pending joint review.
+- **Related ADR:** [ADR-0194](../adr/0194-isolated-base-color-diagnostic-capture.md) (Accepted)
+- **Approval:** [Maintainer joint approval of 5144fe7a](https://github.com/slmao/Atlantis/pull/459#issuecomment-7223673579).
 
 ## Summary and motivation
 

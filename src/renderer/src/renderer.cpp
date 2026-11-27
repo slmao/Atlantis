@@ -547,4 +547,33 @@ FrameEndStates Renderer::drawFrame(atlantis::rhi::CommandList& commandList, atla
   return FrameEndStates{.color = endStates[2], .depth = endStates[1]};
 }
 
+bool Renderer::drawBaseColorDiagnostic(rhi::CommandList& commands, rhi::RenderTarget& target,
+                                      rhi::Texture& depth, rhi::Buffer& uniforms,
+                                      rhi::Pipeline& pipeline, const DrawItem& item) {
+  render_graph::RenderGraphBuilder graph;
+  const auto color = graph.declareResource("diagnostic-color");
+  const auto depthResource = graph.declareResource("diagnostic-depth");
+  const auto pass = graph.declarePass("base-color-diagnostic");
+  graph.writes(pass, color, rhi::ResourceState::ColorAttachmentOutput);
+  graph.writes(pass, depthResource, rhi::ResourceState::DepthAttachmentReadWrite);
+  graph.setExecute(pass, [&](rhi::CommandList& cmd) {
+    cmd.bindPipeline(pipeline);
+    cmd.bindVertexBuffer(item.mesh->vertexBuffer());
+    cmd.bindIndexBuffer(item.mesh->indexBuffer());
+    cmd.bindUniformBuffer(uniforms);
+    cmd.bindTexture(1, *item.material->sampledTexture(), *item.material->sampler());
+    cmd.pushConstant(item.objectToWorld.data(), item.objectToWorld.size() * sizeof(float));
+    cmd.drawIndexed(item.mesh->indexCount());
+  });
+  const auto compiled = graph.compile();
+  if (compiled.isErr()) return false;
+  const std::vector<render_graph::ResourceBinding> bindings{
+      {.resource = compiled.value().resourceAt(0), .target = &target,
+       .colorClear = {0, 0, 0, 0}, .finalState = rhi::ResourceState::TransferSource},
+      {.resource = compiled.value().resourceAt(1), .depthTexture = &depth,
+       .depthClear = 1.0f, .finalState = std::nullopt}};
+  render_graph::execute(compiled.value(), bindings, commands);
+  return commands.recordingValid();
+}
+
 }  // namespace atlantis::renderer

@@ -1,4 +1,8 @@
 #include "frame_capture.h"
+#include "scene_picking.h"
+
+#include <atlantis/asset_system/asset_catalog.h>
+#include <atlantis/asset_system/mesh_artifact.h>
 
 // Plan 0055 P1/P8 (ADR-0106 D5): the PNG encoder for captures. Static
 // implementation (STB_IMAGE_WRITE_STATIC): every stb_image_write symbol has
@@ -37,6 +41,7 @@
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <optional>
 #include <cstring>
 #include <span>
@@ -61,6 +66,14 @@ struct RenderLookResources {
   std::unique_ptr<rhi::Buffer> readback;
   std::unique_ptr<rhi::OffscreenTarget> output;
   std::unique_ptr<rhi::RenderTarget> target;
+  std::unique_ptr<rhi::Pipeline> diagnosticPipeline;
+};
+
+struct CaptureVariant {
+  ActiveCameraInput camera;
+  FrameLightingData lighting;
+  std::vector<DrawItem> items;
+  std::vector<rhi::Pipeline*> pipelines;
 };
 
 connection::FrameData toFrameData(const FrameLightingData& lighting, const CameraMatrices& camera,
@@ -194,65 +207,40 @@ void writeLookUniforms(detail::RenderLookResources& scratch, const CameraMatrice
 
 }  // namespace
 
-connection::RenderLookCaptureResult RuntimeApplication::captureRenderLook(
-    const connection::RenderLookCaptureRequest& request,
-    const std::array<asset_system::ValidatedSceneData, 2>& looks, const BootstrapConfig& config) {
+std::optional<connection::RenderLookCaptureError> RuntimeApplication::checkCaptureAdmission(
+    connection::RenderLookExtent size, std::uint64_t generation, const std::array<std::string, 2>& paths) const {
   using E = connection::RenderLookCaptureError;
-  using R = connection::RenderLookCaptureResult;
-  if (!request.extent.valid()) return R::Err(E::InvalidRequest);
-  const rhi::Extent2D extent{request.extent.width, request.extent.height};
-  const auto bytes = static_cast<std::size_t>(extent.width) * extent.height * 4;
+  if (!size.valid()) return E::InvalidRequest;
   if (lifecycle_.state() != RuntimeLifecycleState::Running || !device_ || !lastSeenFormat_ || environmentData_)
-    return R::Err(E::Unavailable);
-  if (incompleteRenderLook_) return R::Err(E::Busy);
-  if (request.generation != sceneGeneration()) return R::Err(E::StaleProjection);
-  if (request.paths[0].empty() || request.paths[1].empty() || request.paths[0] == request.paths[1] ||
-      std::ranges::any_of(request.paths, [](const std::string& path) {
+    return E::Unavailable;
+  if (incompleteRenderLook_) return E::Busy;
+  if (generation != sceneGeneration()) return E::StaleProjection;
+  if (paths[0].empty() || paths[1].empty() || paths[0] == paths[1] ||
+      std::ranges::any_of(paths, [](const std::string& path) {
         return path.size() > 2048 || path.find('\0') != std::string::npos || !std::filesystem::path(path).is_absolute();
-      })) return R::Err(E::InvalidRequest);
-  for (const auto& path : request.paths) {
+      })) return E::InvalidRequest;
+  for (const auto& path : paths) {
     std::error_code ec;
-    if (std::filesystem::exists(path, ec) || ec) return R::Err(E::InvalidRequest);
+    if (std::filesystem::exists(path, ec) || ec) return E::InvalidRequest;
   }
+  return {};
+}
+
+std::optional<connection::RenderLookCaptureError> RuntimeApplication::captureNormalFrames(
+    rhi::Extent2D extent, const CameraMatrices& camera, std::span<detail::CaptureVariant> variants,
+    std::span<std::vector<std::uint8_t>> pngs, const BootstrapConfig& config) {
+  using E = connection::RenderLookCaptureError;
+  const auto bytes = static_cast<std::size_t>(extent.width) * extent.height * 4;
   auto& output = isSrgbFormat(*lastSeenFormat_) ? outputTransformSrgbPipeline_ : outputTransformUnormPipeline_;
   if (!output || !shadowCastPipeline_ || !shadowMapSampler_ || !fallbackMaterial_)
-    return R::Err(E::Unavailable);
-  const auto camera = extractCameraMatrices(request.camera.worldMatrix, request.camera.fovYRadians,
-                                             request.camera.nearZ, request.camera.farZ,
-                                             static_cast<float>(extent.width) / static_cast<float>(extent.height));
-  if (camera.isErr()) return R::Err(E::InvalidRequest);
-
-  struct Variant {
-    ActiveCameraInput camera;
-    FrameLightingData lighting;
-    std::vector<DrawItem> items;
-    std::vector<rhi::Pipeline*> pipelines;
-  };
-  std::array<Variant, 2> variants{};
-  bool wantsBloom = false;
-  for (std::size_t i = 0; i < variants.size(); ++i) {
-    auto baked = world::bakeScene(looks[i]);
-    const auto active = collectActiveCamera(baked);
-    const auto lighting = extractFrameLightingData(collectLights(baked));
-    if (!active || lighting.isErr()) return R::Err(E::InvalidRequest);
-    const auto renderables = collectRenderables(baked);
-    for (const auto& item : renderables) {
-      if (!meshResourceMap_.contains(item.renderable.meshAsset) ||
-          (item.renderable.materialAsset && !materialResourceMap_.contains(*item.renderable.materialAsset)))
-        return R::Err(E::Unavailable);
-    }
-    auto& variant = variants[i];
-    variant.camera = *active;
-    variant.camera.worldMatrix = request.camera.worldMatrix;
-    variant.lighting = lighting.value();
-    variant.items = assembleCaptureDrawItems(renderables);
-    wantsBloom |= active->camera.bloom.strength > 0.0f;
-  }
-
+    return E::Unavailable;
+  const bool wantsBloom = std::ranges::any_of(variants, [](const auto& variant) {
+    return variant.camera.camera.bloom.strength > 0.0f;
+  });
   auto scratch = std::make_shared<detail::RenderLookResources>();
   if (wantsBloom && !bloomPipelines_.front()) {
     auto localPipelines = createRenderLookBloomPipelines(config);
-    if (!localPipelines) return R::Err(E::Unavailable);
+    if (!localPipelines) return E::Unavailable;
     scratch->bloomPipelines = std::move(*localPipelines);
   }
   const auto& bloomPipelines = scratch->bloomPipelines.front() ? scratch->bloomPipelines : bloomPipelines_;
@@ -269,12 +257,12 @@ connection::RenderLookCaptureResult RuntimeApplication::captureRenderLook(
       for (const auto& p : bloomPipelines) add(p.get());
     const auto checked = device_->checkIsolatedBindings(variant.pipelines);
     if (checked.isErr())
-      return R::Err(checked.error() == rhi::CommandListCreateError::IsolatedBindingBudgetExceeded
-                        ? E::BudgetExceeded : E::CaptureFailed);
+      return checked.error() == rhi::CommandListCreateError::IsolatedBindingBudgetExceeded
+                        ? E::BudgetExceeded : E::CaptureFailed;
   }
   if (device_->waitIdle().isErr()) {
     lifecycle_.markFailed();
-    return R::Err(E::CaptureFailed);
+    return E::CaptureFailed;
   }
   auto uniform = device_->createBuffer({.purpose = rhi::BufferPurpose::Uniform, .sizeBytes = kCameraUniformBufferSizeBytes});
   auto shadowUniform = device_->createBuffer({.purpose = rhi::BufferPurpose::Uniform, .sizeBytes = sizeof(CameraMatrices)});
@@ -284,7 +272,7 @@ connection::RenderLookCaptureResult RuntimeApplication::captureRenderLook(
   auto readback = device_->createBuffer({.purpose = rhi::BufferPurpose::Readback, .sizeBytes = bytes});
   auto target = device_->createOffscreenTarget({.extent = extent, .format = *lastSeenFormat_});
   if (uniform.isErr() || shadowUniform.isErr() || shadow.isErr() || depth.isErr() || hdr.isErr() ||
-      readback.isErr() || target.isErr()) return R::Err(E::CaptureFailed);
+      readback.isErr() || target.isErr()) return E::CaptureFailed;
   scratch->camera = std::move(uniform.value());
   scratch->shadowSpace = std::move(shadowUniform.value());
   scratch->shadow = std::move(shadow.value());
@@ -294,25 +282,22 @@ connection::RenderLookCaptureResult RuntimeApplication::captureRenderLook(
   scratch->output = std::move(target.value());
   if (wantsBloom) {
     auto bloom = renderer::createBloomTargets(*device_, extent);
-    if (bloom.isErr()) return R::Err(E::CaptureFailed);
+    if (bloom.isErr()) return E::CaptureFailed;
     scratch->bloom.emplace(std::move(bloom.value()));
   }
   auto borrow = scratch->output->acquireTarget();
-  if (borrow.isErr()) return R::Err(E::CaptureFailed);
+  if (borrow.isErr()) return E::CaptureFailed;
   scratch->target = std::move(borrow.value());
 
   std::optional<renderer::EnvironmentLighting> environment;
   if (environmentLightingResources_) environment.emplace(environmentLightingResources_->borrowedView());
-  connection::RenderLookCapturedPair result{request.document, request.apply, request.generation,
-      request.basis.activeCamera, {}, {}, request.looks};
-  std::array<std::vector<std::uint8_t>, 2> pngs;
   for (std::size_t i = 0; i < variants.size(); ++i) {
     const auto& variant = variants[i];
     const auto& active = variant.camera;
-    writeLookUniforms(*scratch, camera.value(), variant.lighting, active,
+    writeLookUniforms(*scratch, camera, variant.lighting, active,
         environmentLightingResources_ ? &environmentLightingResources_->irradianceSh : nullptr);
     auto commands = device_->createIsolatedCommandList(variant.pipelines);
-    if (commands.isErr()) return R::Err(E::CaptureFailed);
+    if (commands.isErr()) return E::CaptureFailed;
     std::optional<renderer::BloomInput> bloom;
     if (active.camera.bloom.strength > 0.0f) {
       bloom.emplace(renderer::BloomInput{.targets = *scratch->bloom,
@@ -328,16 +313,16 @@ connection::RenderLookCaptureResult RuntimeApplication::captureRenderLook(
         *shadowMapSampler_, *shadowCastPipeline_, *scratch->shadowSpace, casters,
         std::array{position.x, position.y, position.z}, bloom ? &*bloom : nullptr);
     if (!recordLookReadback(*commands.value(), *scratch->target, *scratch->readback))
-      return R::Err(E::CaptureFailed);
+      return E::CaptureFailed;
     const auto submitted = device_->submit(std::move(commands.value()), *scratch->target);
     if (submitted.isErr()) {
       if (submitted.error() == rhi::SubmitError::DeviceLost) lifecycle_.markFailed();
-      return R::Err(E::CaptureFailed);
+      return E::CaptureFailed;
     }
     if (device_->waitIdle().isErr()) {
       incompleteRenderLook_ = std::move(scratch);
       lifecycle_.markFailed();
-      return R::Err(E::CaptureFailed);
+      return E::CaptureFailed;
     }
     const auto* pixels = static_cast<const std::uint8_t*>(scratch->readback->mappedData());
     std::vector<std::uint8_t> rgba(pixels, pixels + bytes);
@@ -347,14 +332,193 @@ connection::RenderLookCaptureResult RuntimeApplication::captureRenderLook(
       rgba[p + 3] = 255;
     }
     auto png = detail::encodeCapturePng(extent.width, extent.height, rgba, bytes * 2);
-    if (!png) return R::Err(E::CaptureFailed);
+    if (!png) return E::CaptureFailed;
     pngs[i] = std::move(*png);
+  }
+  return {};
+}
+
+connection::RenderLookCaptureResult RuntimeApplication::captureRenderLook(
+    const connection::RenderLookCaptureRequest& request,
+    const std::array<asset_system::ValidatedSceneData, 2>& looks, const BootstrapConfig& config) {
+  using E = connection::RenderLookCaptureError;
+  using R = connection::RenderLookCaptureResult;
+  if (const auto error = checkCaptureAdmission(request.extent, request.generation, request.paths)) return R::Err(*error);
+  const rhi::Extent2D extent{request.extent.width, request.extent.height};
+  const auto camera = extractCameraMatrices(request.camera.worldMatrix, request.camera.fovYRadians,
+      request.camera.nearZ, request.camera.farZ, static_cast<float>(extent.width) / static_cast<float>(extent.height));
+  if (camera.isErr()) return R::Err(E::InvalidRequest);
+  std::array<detail::CaptureVariant, 2> variants{};
+  for (std::size_t i = 0; i < variants.size(); ++i) {
+    auto baked = world::bakeScene(looks[i]);
+    const auto active = collectActiveCamera(baked);
+    const auto lighting = extractFrameLightingData(collectLights(baked));
+    if (!active || lighting.isErr()) return R::Err(E::InvalidRequest);
+    const auto renderables = collectRenderables(baked);
+    for (const auto& item : renderables) {
+      if (!meshResourceMap_.contains(item.renderable.meshAsset) ||
+          (item.renderable.materialAsset && !materialResourceMap_.contains(*item.renderable.materialAsset)))
+        return R::Err(E::Unavailable);
+    }
+    auto& variant = variants[i];
+    variant.camera = *active;
+    variant.camera.worldMatrix = request.camera.worldMatrix;
+    variant.lighting = lighting.value();
+    variant.items = assembleCaptureDrawItems(renderables);
+  }
+
+
+  std::array<std::vector<std::uint8_t>, 2> pngs;
+  if (const auto error = captureNormalFrames(extent, camera.value(), variants, pngs, config)) return R::Err(*error);
+  connection::RenderLookCapturedPair result{request.document, request.apply, request.generation,
+      request.basis.activeCamera, {}, {}, request.looks};
+  for (std::size_t i = 0; i < variants.size(); ++i) {
+    const auto& variant = variants[i];
     result.frames[i] = detail::toFrameData(variant.lighting, camera.value(), variant.items.size(),
-                                           active.camera.exposureCompensationEv);
+        variant.camera.camera.exposureCompensationEv);
     result.images[i] = {request.paths[i], extent.width, extent.height};
   }
   if (!saveLookPair(request.paths, pngs)) return R::Err(E::CaptureFailed);
   return R::Ok(std::move(result));
+}
+
+namespace {
+
+std::optional<std::vector<std::uint32_t>> readDiagnosticSpirv(const std::filesystem::path& path) {
+  std::ifstream file(path, std::ios::binary | std::ios::ate);
+  const auto bytes = static_cast<std::streamoff>(file.tellg());
+  if (bytes <= 0 || bytes > 1024 * 1024 || bytes % 4 != 0) return {};
+  std::vector<std::uint32_t> words(static_cast<std::size_t>(bytes) / 4);
+  file.seekg(0);
+  if (!file.read(reinterpret_cast<char*>(words.data()), bytes)) return {};
+  return words;
+}
+
+}  // namespace
+
+std::optional<connection::RenderLookCaptureError> RuntimeApplication::captureBaseColor(
+    rhi::Extent2D extent, const CameraMatrices& camera, const DrawItem& item,
+    rhi::Pipeline& pipeline, std::unique_ptr<rhi::Pipeline> pipelineOwner, std::vector<std::uint8_t>& png) {
+  using E = connection::RenderLookCaptureError;
+  const auto bytes = static_cast<std::size_t>(extent.width) * extent.height * 4;
+  auto scratch = std::make_shared<detail::RenderLookResources>();
+  scratch->diagnosticPipeline = std::move(pipelineOwner);
+  const std::array uniforms{camera.view, camera.projection};
+  const auto& factor = item.material->baseColorFactor();
+  auto buffer = device_->createBuffer({.purpose = rhi::BufferPurpose::Uniform,
+      .sizeBytes = sizeof(uniforms) + sizeof(factor)});
+  auto depth = device_->createTexture({.extent = extent, .format = rhi::DepthFormat::D32Sfloat});
+  auto readback = device_->createBuffer({.purpose = rhi::BufferPurpose::Readback, .sizeBytes = bytes});
+  auto output = device_->createOffscreenTarget({.extent = extent, .format = rhi::Format::Rgba8Srgb});
+  if (buffer.isErr() || depth.isErr() || readback.isErr() || output.isErr()) return E::CaptureFailed;
+  scratch->camera = std::move(buffer.value());
+  scratch->depth = std::move(depth.value());
+  scratch->readback = std::move(readback.value());
+  scratch->output = std::move(output.value());
+  auto target = scratch->output->acquireTarget();
+  if (target.isErr()) return E::CaptureFailed;
+  scratch->target = std::move(target.value());
+  auto* data = static_cast<std::byte*>(scratch->camera->mappedData());
+  std::memcpy(data, uniforms.data(), sizeof(uniforms));
+  std::memcpy(data + sizeof(uniforms), factor.data(), sizeof(factor));
+  const std::array pipelines{&pipeline};
+  auto commands = device_->createIsolatedCommandList(pipelines);
+  if (commands.isErr()) return E::CaptureFailed;
+  if (!renderer_.drawBaseColorDiagnostic(*commands.value(), *scratch->target, *scratch->depth,
+                                        *scratch->camera, pipeline, item) ||
+      !recordLookReadback(*commands.value(), *scratch->target, *scratch->readback))
+    return E::CaptureFailed;
+  const auto submitted = device_->submit(std::move(commands.value()), *scratch->target);
+  if (submitted.isErr()) {
+    if (submitted.error() == rhi::SubmitError::DeviceLost) lifecycle_.markFailed();
+    return E::CaptureFailed;
+  }
+  if (device_->waitIdle().isErr()) {
+    incompleteRenderLook_ = std::move(scratch);
+    lifecycle_.markFailed();
+    return E::CaptureFailed;
+  }
+  const auto* dataOut = static_cast<const std::uint8_t*>(scratch->readback->mappedData());
+  auto encoded = detail::encodeCapturePng(extent.width, extent.height, {dataOut, bytes}, bytes * 2);
+  if (!encoded) return E::CaptureFailed;
+  png = std::move(*encoded);
+  return {};
+}
+
+connection::MaterialDiagnosticResult RuntimeApplication::captureMaterialDiagnostic(
+    const connection::MaterialDiagnosticRequest& request, const asset_system::AssetCatalog& catalog,
+    const BootstrapConfig& config, const std::filesystem::path& shaderDirectory) {
+  using E = connection::RenderLookCaptureError;
+  using R = connection::MaterialDiagnosticResult;
+  if (const auto error = checkCaptureAdmission(request.extent, request.generation, request.paths)) return R::Err(*error);
+  if (!scene_) return R::Err(E::Unavailable);
+  if (request.viewport && (!viewportVisibilityEnabled_ || *request.viewport != visibilityStamp() ||
+                           presentedVisibility_ != *request.viewport || visibility_)) return R::Err(E::StaleProjection);
+  const auto id = scene_->entities.find(request.target.entity);
+  if (!id) return R::Err(E::TargetChanged);
+  const auto renderable = collectVisibleRenderables(*scene_, [&](auto entity) { return entity == *id; });
+  if (renderable.size() != 1 || !renderable.front().renderable.materialAsset) return R::Err(E::TargetChanged);
+  const auto& binding = renderable.front().renderable;
+  const auto* mesh = catalog.find(binding.meshAsset);
+  const auto* material = catalog.find(*binding.materialAsset);
+  if (!mesh || mesh->type != asset_system::CatalogAssetType::Mesh || mesh->guid != request.target.mesh ||
+      !material || material->type != asset_system::CatalogAssetType::Material || material->guid != request.target.material)
+    return R::Err(E::TargetChanged);
+  const auto recipe = materialDataMap_.find(*binding.materialAsset);
+  if (recipe == materialDataMap_.end() || recipe->second.kind != asset_system::MaterialKind::PbrDirectLit ||
+      recipe->second.alphaMode != asset_system::MaterialAlphaMode::Opaque) return R::Err(E::Unavailable);
+  const auto* texture = catalog.find(recipe->second.textureAsset);
+  const auto target = assembleCaptureDrawItems(renderable);
+  if (!texture || texture->type != asset_system::CatalogAssetType::Texture || target.size() != 1 ||
+      !target.front().material->sampledTexture() || !target.front().material->sampler()) return R::Err(E::Unavailable);
+  const auto active = collectActiveCamera(*scene_);
+  const auto lighting = extractFrameLightingData(collectLights(*scene_));
+  if (!active || lighting.isErr()) return R::Err(E::Unavailable);
+  const rhi::Extent2D extent{request.extent.width, request.extent.height};
+  const auto camera = extractCameraMatrices(request.camera.worldMatrix, request.camera.fovYRadians,
+      request.camera.nearZ, request.camera.farZ, static_cast<float>(extent.width) / static_cast<float>(extent.height));
+  if (camera.isErr()) return R::Err(E::InvalidRequest);
+  auto view = *active;
+  view.worldMatrix = request.camera.worldMatrix;
+  const auto sceneRenderables = collectRenderables(*scene_);
+  for (const auto& object : sceneRenderables) {
+    if (!meshResourceMap_.contains(object.renderable.meshAsset) ||
+        (object.renderable.materialAsset && !materialResourceMap_.contains(*object.renderable.materialAsset)))
+      return R::Err(E::Unavailable);
+  }
+  std::array variants{detail::CaptureVariant{view, lighting.value(), assembleCaptureDrawItems(sceneRenderables), {}}};
+  const auto vertex = readDiagnosticSpirv(shaderDirectory / "base_color_diagnostic.vert.spv");
+  const auto fragment = readDiagnosticSpirv(shaderDirectory / "base_color_diagnostic.frag.spv");
+  if (!vertex || !fragment) return R::Err(E::Unavailable);
+  auto pipeline = device_->createPipeline({
+      .vertexShader = {vertex->data(), vertex->size()}, .fragmentShader = {fragment->data(), fragment->size()},
+      .vertexInputLayout = {asset_system::kMeshArtifactVertexStrideBytes,
+          {{0, asset_system::kMeshArtifactPositionOffsetBytes, rhi::VertexAttributeFormat::Float3},
+           {1, asset_system::kMeshArtifactUv0OffsetBytes, rhi::VertexAttributeFormat::Float2}}},
+      .colorFormat = rhi::Format::Rgba8Srgb, .depthFormat = rhi::DepthFormat::D32Sfloat,
+      .pushConstantSizeBytes = sizeof(Mat4), .sampledTextureBindingCount = 1});
+  if (pipeline.isErr()) return R::Err(E::CaptureFailed);
+  auto* diagnosticPipeline = pipeline.value().get();
+  std::array bindings{diagnosticPipeline};
+  const auto check = device_->checkIsolatedBindings(bindings);
+  if (check.isErr()) return R::Err(E::BudgetExceeded);
+  std::array<std::vector<std::uint8_t>, 2> pngs;
+  if (const auto error = captureNormalFrames(extent, camera.value(), variants, std::span(pngs).first(1), config))
+    return R::Err(*error);
+  if (const auto error = captureBaseColor(extent, camera.value(), target.front(), *diagnosticPipeline,
+                                         std::move(pipeline.value()), pngs[1])) return R::Err(*error);
+  if (!saveLookPair(request.paths, pngs)) return R::Err(E::CaptureFailed);
+  const auto& factor = target.front().material->baseColorFactor();
+  connection::FrameData baseColor{};
+  baseColor.view = camera.value().view;
+  baseColor.projection = camera.value().projection;
+  baseColor.drawItemCount = 1;
+  return R::Ok({request.document, request.apply, request.generation, request.target, texture->guid,
+      {factor[0], factor[1], factor[2]},
+      {detail::toFrameData(lighting.value(), camera.value(), variants.front().items.size(),
+                          active->camera.exposureCompensationEv), std::move(baseColor)},
+      {connection::CapturedImage{request.paths[0], extent.width, extent.height},
+       connection::CapturedImage{request.paths[1], extent.width, extent.height}}});
 }
 
 // Plan 0055 P8: the DrawItems runFrame() hands drawFrame() -- the same

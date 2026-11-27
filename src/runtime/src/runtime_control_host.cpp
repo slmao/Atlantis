@@ -142,7 +142,14 @@ connection::RuntimeStatus RuntimeControlHost::status() {
   return connection::RuntimeStatus{paused_, frame_, target_.scene,
                                    target_.sceneGeneration ? target_.sceneGeneration() : 0,
                                    static_cast<bool>(target_.captureRenderLook),
-                                   static_cast<bool>(target_.captureRenderLook)};
+                                   static_cast<bool>(target_.captureRenderLook),
+                                   static_cast<bool>(target_.captureMaterialDiagnostic)};
+}
+
+connection::MaterialDiagnosticResult RuntimeControlHost::captureMaterialDiagnostic(
+    const connection::MaterialDiagnosticRequest& request) {
+  return target_.captureMaterialDiagnostic ? target_.captureMaterialDiagnostic(request)
+                                           : RuntimeControl::captureMaterialDiagnostic(request);
 }
 
 connection::RenderLookCaptureResult RuntimeControlHost::captureRenderLook(const connection::RenderLookCaptureRequest& request) {

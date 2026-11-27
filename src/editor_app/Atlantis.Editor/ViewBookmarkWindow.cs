@@ -76,6 +76,7 @@ public sealed partial class MainWindow
 
     private void CloseBookmarkComparison()
     {
+        CloseMaterialDiagnostic();
         _bookmarkComparison?.Close();
         _bookmarkComparison = null;
     }
