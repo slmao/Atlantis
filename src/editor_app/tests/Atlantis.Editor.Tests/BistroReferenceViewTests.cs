@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading.Tasks;
 using Atlantis.Editor.Model;
 using Atlantis.Gameplay;
@@ -97,6 +98,25 @@ public static partial class Program
                 "failed replacement preserves the winning bytes and cleans staging");
             first.Save(current.Revision, view with { Name = "CLOSE" }, saved.Id);
             Check(other.Read().Entries.Single().Id == saved.Id, "explicit replacement preserves bookmark identity");
+            var goodBytes = File.ReadAllBytes(path);
+            var goodRevision = other.Read().Revision;
+            var json = Encoding.UTF8.GetString(goodBytes);
+            var badUtf8 = Encoding.UTF8.GetBytes(json.Replace("\"CLOSE\"", "\"?\""));
+            badUtf8[Array.IndexOf(badUtf8, (byte)'?')] = 0xff;
+            foreach (var (label, bytes) in new[]
+            {
+                ("invalid UTF-8", badUtf8),
+                ("incomplete surrogate", Encoding.UTF8.GetBytes(json.Replace("\"CLOSE\"", "\"\\uD800\""))),
+            })
+            {
+                File.WriteAllBytes(path, bytes);
+                Refused(() => first.Read(), label + " is a diagnosable bookmark read failure");
+                Refused(() => other.Save(goodRevision, view, saved.Id), label + " refuses bookmark writes");
+                Refused(() => other.Remove(goodRevision, saved.Id), label + " refuses bookmark removal");
+                Check(File.ReadAllBytes(path).SequenceEqual(bytes) && temp.GetFiles("*.tmp").Length == 0,
+                    label + " preserves the original bytes without staging a new file");
+            }
+            File.WriteAllBytes(path, goodBytes);
             Check(new ViewBookmarkStore(document with { Scene = new(Guid.NewGuid()) }, temp.FullName).Read().Entries.Count == 0,
                 "bookmark identity separates another scene GUID");
             var moved = Path.Combine(temp.FullName, "copy.scene.txt");
@@ -212,14 +232,16 @@ public static partial class Program
     }
 
     private static int RunBistroReferenceUi(string runtime, string scene, string evidence,
-        bool tuning = false, bool materialBinding = false, bool statistics = false, bool batchRename = false)
+        bool tuning = false, bool materialBinding = false, bool statistics = false, bool batchRename = false,
+        bool bookmarkProjection = false)
     {
         Directory.CreateDirectory(evidence);
-        return AppBuilder.Configure(() => new BistroReferenceApp(runtime, scene, evidence, tuning, materialBinding, statistics, batchRename)).UsePlatformDetect()
+        return AppBuilder.Configure(() => new BistroReferenceApp(runtime, scene, evidence, tuning, materialBinding, statistics, batchRename, bookmarkProjection)).UsePlatformDetect()
             .StartWithClassicDesktopLifetime([]);
     }
 
-    private sealed class BistroReferenceApp(string runtime, string scene, string evidence, bool tuning, bool materialBinding, bool statistics, bool batchRename) : Application
+    private sealed class BistroReferenceApp(string runtime, string scene, string evidence,
+        bool tuning, bool materialBinding, bool statistics, bool batchRename, bool bookmarkProjection) : Application
     {
         public override void Initialize()
         {
@@ -249,6 +271,7 @@ public static partial class Program
                     else if (statistics) await CheckSceneStatisticsUi(window, evidence);
                     else if (materialBinding) await CheckMaterialBindingUi(window, evidence);
                     else if (tuning) await CheckBistroTuningUi(window, evidence);
+                    else if (bookmarkProjection) await CheckBookmarkProjection(window, evidence);
                     else await CheckBistroReferenceUi(window, evidence);
                     exit = 0;
                 }
@@ -263,6 +286,74 @@ public static partial class Program
             });
             base.OnFrameworkInitializationCompleted();
         }
+    }
+
+    private static async Task CheckBookmarkProjection(MainWindow window, string evidence)
+    {
+        T Field<T>(string name) where T : class => NameUiField<T>(window, name)!;
+        static void Require(bool condition, string message)
+        {
+            if (!condition) throw new InvalidOperationException(message);
+            Console.WriteLine("PASS " + message);
+        }
+
+        await NameUiWait(() => Field<Button>("_viewBookmarks").IsEnabled, "bookmarks and hosted Runtime", 120);
+        var viewport = Field<ViewportHost>("_viewport").Window!;
+        Require(GetDpiForWindow(window.TryGetPlatformHandle()!.Handle) == 96 && viewport.RuntimeChildIsHosted(),
+            "Windows 100% hosted drawable");
+        var extent = new RenderLookExtent((uint)viewport.Width, (uint)viewport.Height);
+        Require(extent.IsValid && viewport.RuntimeChildHasExtent(viewport.Width, viewport.Height), "drawable extent confirmed");
+        var session = SessionFile.Read(Field<RuntimeProcess>("_runtime").SessionPath);
+        using var peer = RemoteSession.Connect(session);
+        var document = peer.Authoring.DocumentState().Value!;
+        var posted = new ConcurrentQueue<Action>();
+        using var log = new EditorLog(Path.Combine(evidence, "worker.log"));
+        using var worker = new EditorWorker(session, posted.Enqueue, log);
+        worker.SetViewportExtent(viewport.Width, viewport.Height);
+        worker.Start();
+        async Task Flush() => Require((await worker.ReviewDocument().WaitAsync(TimeSpan.FromSeconds(25))).State?.Token == document.Token,
+            "Worker document token remains unchanged");
+        void Deliver() { while (posted.TryDequeue(out var action)) action(); }
+
+        await Flush();
+        BookmarkFrame? frame = null;
+        string? error = null;
+        bool delivered = false;
+        void Receive(BookmarkFrame? result, string? diagnostic) => (frame, error, delivered) = (result, diagnostic, true);
+        worker.ObserveBookmarkView(document.Token, 0, extent, null, null, Receive);
+        await Flush();
+        Deliver();
+        Require(frame is not null && error is null, "initial view settled");
+        ulong prior = frame!.Status.SceneGeneration;
+        var view = frame.View;
+        var oldPath = Path.GetFullPath(Path.Combine(evidence, "old-projection.png"));
+        delivered = false;
+        worker.ObserveBookmarkView(document.Token, 0, extent, view, oldPath, Receive, settledGeneration: prior);
+        await Flush();
+        Require(File.Exists(oldPath) && !delivered, "old capture completed with UI reply held");
+
+        var apply = peer.Authoring.ApplyTracked().Value!;
+        await NameUiWait(() => peer.Authoring.ApplyStatus(apply.Id).Value?.Request?.State == ApplyState.Applied,
+            "second client applies the same document revision", 35);
+        ulong next = peer.Control.Status().SceneGeneration;
+        Require(next > prior && peer.Authoring.DocumentState().Value?.Token == document.Token, "only the projection generation advanced");
+        await NameUiWait(() => worker.NavigationGeneration == next, "Worker observes the new generation before UI delivery", 25);
+        Deliver();
+        Require(delivered && frame is null && error is not null, "late capture completion rejected");
+
+        var newPath = Path.GetFullPath(Path.Combine(evidence, "new-projection.png"));
+        worker.ObserveBookmarkView(document.Token, 0, extent, view, newPath, Receive, settledGeneration: prior);
+        await Flush();
+        Deliver();
+        Require(frame is null && error is not null && !File.Exists(newPath), "old settlement cannot send another capture");
+        worker.ObserveBookmarkView(document.Token, 0, extent, view, null, Receive);
+        await Flush();
+        Deliver();
+        Require(frame?.Status.SceneGeneration == next && error is null, "fresh view settles on the new projection");
+        worker.ObserveBookmarkView(document.Token, 0, extent, view, newPath, Receive, settledGeneration: next);
+        await Flush();
+        Deliver();
+        Require(frame?.Status.SceneGeneration == next && error is null && File.Exists(newPath), "fresh projection can capture");
     }
 
     private static async Task CheckBistroReferenceUi(MainWindow window, string evidence)

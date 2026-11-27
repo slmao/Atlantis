@@ -140,6 +140,7 @@ public sealed partial class MainWindow
         if (_bistroView is null) return;
         ++_bistroRevision;
         ++_pickRequest;
+        _bookmarkProjection = null;
         _bistroReady = _bistroSent = _bistroCapturing = false;
         _navigationPending = true;
         _bistroLayoutStarted = Stopwatch.GetTimestamp();
@@ -188,6 +189,7 @@ public sealed partial class MainWindow
         _bistroView = null;
         _bistroPreset = null;
         _activeBookmark = null;
+        _bookmarkProjection = null;
         CloseBookmarkComparison();
         _bistroCompare?.ClearPair();
         _bistroReady = _bistroSent = _bistroCapturing = false;
@@ -200,7 +202,8 @@ public sealed partial class MainWindow
 
     private bool BistroProjectionReady(ViewportWindow window)
     {
-        if (_bistroView is { } view) return _bistroReady && BistroFixedDrawable(window, view);
+        if (_bistroView is { } view)
+            return _bistroReady && (_activeBookmark is null || BookmarkProjectionCurrent) && BistroFixedDrawable(window, view);
         if (!_bistroResizeRecovery) return true;
         _bistroResizeRecovery = !window.RuntimeChildHasExtent(window.Width, window.Height);
         return !_bistroResizeRecovery;

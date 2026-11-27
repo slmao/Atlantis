@@ -69,7 +69,8 @@ internal sealed class ViewBookmarkStore
             }
             return new(Convert.ToHexString(SHA256.HashData(bytes)), result);
         }
-        catch (JsonException error) { throw new IOException("The bookmark store is unreadable.", error); }
+        catch (Exception error) when (error is JsonException or InvalidOperationException)
+        { throw new IOException("The bookmark store is unreadable.", error); }
     }
 
     internal void Save(string expectedRevision, ViewportObservation view, Guid? replace) =>

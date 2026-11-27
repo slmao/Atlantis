@@ -340,6 +340,7 @@ public sealed class EditorWorker : IDisposable
     private bool _navigationSupported;
     private bool _navigationUncertain;
     private ulong _navigationGeneration;
+    internal ulong NavigationGeneration => Volatile.Read(ref _navigationGeneration);
     private CameraPose? _navigationSceneCamera;
     private EditorCamera? _confirmedEditorCamera;
     private bool _stopping;
@@ -1450,7 +1451,7 @@ public sealed class EditorWorker : IDisposable
         _navigationSupported = result.Error?.Code != ViewportNavigationError.Unsupported;
         if (result.Value is ViewportNavigation value)
         {
-            _navigationGeneration = value.SceneGeneration;
+            Volatile.Write(ref _navigationGeneration, value.SceneGeneration);
             _navigationSceneCamera = NavigationPose(value.SceneCamera);
             _navigationUncertain = false;
             PublishNavigation(intent, success);
@@ -1495,7 +1496,7 @@ public sealed class EditorWorker : IDisposable
         if (reference is not null)
         {
             generation = session.Control.Status().SceneGeneration;
-            _navigationGeneration = generation;
+            Volatile.Write(ref _navigationGeneration, generation);
             lock (_lock)
             {
                 extentRevision = _viewportExtentRevision;
@@ -1532,7 +1533,7 @@ public sealed class EditorWorker : IDisposable
                     PublishNavigation(intent, "The Runtime scene changed. Invoke navigation again.");
                     return;
                 }
-                _navigationGeneration = generation;
+                Volatile.Write(ref _navigationGeneration, generation);
                 if (source is null)
                 {
                     _navigationSceneCamera = NavigationPose(value.SceneCamera);
@@ -1679,7 +1680,8 @@ public sealed class EditorWorker : IDisposable
     }
 
     internal void ObserveBookmarkView(DocumentToken document, long intent, RenderLookExtent size,
-        ViewportObservation? expected, string? path, Action<BookmarkFrame?, string?> completion)
+        ViewportObservation? expected, string? path, Action<BookmarkFrame?, string?> completion,
+        ulong? settledGeneration = null)
     {
         long lifetime = MeshDocumentLifetime;
         ulong extent;
@@ -1695,7 +1697,7 @@ public sealed class EditorWorker : IDisposable
             void Result(BookmarkFrame? frame, string? error) => _post(() =>
             {
                 bool current;
-                lock (_lock) current = Current();
+                lock (_lock) current = Current() && (frame is null || frame.Status.SceneGeneration == NavigationGeneration);
                 completion(current ? frame : null, error ?? (current ? null : changed));
             });
             lock (_lock)
@@ -1706,7 +1708,8 @@ public sealed class EditorWorker : IDisposable
             var before = session.Control.Status();
             var visibility = session.Control.ViewportVisibility().Value;
             var apply = _document?.ApplyStatus().Value;
-            if (before.Paused || before.SceneGeneration != _navigationGeneration || !MatchesDocument() ||
+            if (before.Paused || before.SceneGeneration != NavigationGeneration ||
+                (settledGeneration is ulong generation && before.SceneGeneration != generation) || !MatchesDocument() ||
                 visibility is not { Owner: ViewportOwner.None, Presented: true } ||
                 visibility.Stamp.SceneGeneration != before.SceneGeneration ||
                 apply?.Request?.State == ApplyState.Pending ||
@@ -1872,7 +1875,7 @@ public sealed class EditorWorker : IDisposable
     {
         _navigationUncertain = true;
         RuntimeStatus settled = session.Control.Status();
-        _navigationGeneration = settled.SceneGeneration;
+        Volatile.Write(ref _navigationGeneration, settled.SceneGeneration);
         _navigationUncertain = settled.SceneGeneration != generation;
     }
 
@@ -5828,7 +5831,7 @@ public sealed class EditorWorker : IDisposable
         RuntimeStatus status = session.Control.Status();
         if (status.SceneGeneration > _navigationGeneration)
         {
-            _navigationGeneration = status.SceneGeneration;
+            Volatile.Write(ref _navigationGeneration, status.SceneGeneration);
             if (_navigationSupported && _confirmedEditorCamera is null)
             {
                 long intent;

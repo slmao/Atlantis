@@ -27,6 +27,7 @@ public sealed partial class MainWindow
     private Button? _bookmarkCapture;
     private bool _bookmarkSamplePending;
     private long _bookmarkStoreRevision;
+    private ulong? _bookmarkProjection;
     private event Action? BookmarksChanged;
 
     private void InitializeBookmarks()
@@ -45,11 +46,15 @@ public sealed partial class MainWindow
         !_referenceSessionFailed && _viewport.Window?.RuntimeChildIsHosted() == true &&
         _documentState is { Availability: DocumentAvailability.Known, State.Provenance: Provenance.HandAuthored };
 
+    private bool BookmarkProjectionCurrent => _bookmarkProjection is ulong generation && _worker?.NavigationGeneration == generation;
+
+    private const string BookmarkProjectionChanged = "The Runtime projection changed. Return to the bookmark before capturing again.";
+
     private void UpdateBookmarkActions(bool navigation)
     {
         _viewBookmarks.IsEnabled = navigation && BookmarkAllowed;
         if (_bookmarkCapture is { } capture)
-            capture.IsEnabled = _activeBookmark is not null && _bistroReady && !_navigationPending &&
+            capture.IsEnabled = _activeBookmark is not null && _bistroReady && BookmarkProjectionCurrent && !_navigationPending &&
                 !_bistroCapturing && !_bistroApplyBlocked && !_play.IsEnabled && navigation && BookmarkAllowed;
     }
 
@@ -251,6 +256,12 @@ public sealed partial class MainWindow
                 LeaveBistroView(error ?? "The restored bookmark could not be verified.");
                 return;
             }
+            if (frame.Status.SceneGeneration != worker.NavigationGeneration)
+            {
+                LeaveBistroView(BookmarkProjectionChanged);
+                return;
+            }
+            _bookmarkProjection = frame.Status.SceneGeneration;
             _bistroReady = true;
             ++_pickRequest;
             ShowNavigationMessage(view.Name + " · ready");
@@ -268,7 +279,12 @@ public sealed partial class MainWindow
     private void CaptureBookmarkView()
     {
         if (_worker is not { } worker || _documentState.State is not { } document || _activeBookmark is not { } bookmark ||
-            !_bistroReady || _bistroCapturing || BistroLocatorProtected()) return;
+            !_bistroReady || _bistroCapturing || _bookmarkProjection is not ulong projection || BistroLocatorProtected()) return;
+        if (!BookmarkProjectionCurrent)
+        {
+            LeaveBistroView(BookmarkProjectionChanged);
+            return;
+        }
         if (!BookmarkStillSaved(document, bookmark))
         {
             LeaveBistroView("The bookmark changed. Refresh and return to the updated view.");
@@ -286,7 +302,13 @@ public sealed partial class MainWindow
         {
             try
             {
-                if (!Current() || _documentState.State?.Token != document.Token) return;
+                if (!Current()) return;
+                if (!BookmarkProjectionCurrent)
+                {
+                    LeaveBistroView(BookmarkProjectionChanged);
+                    return;
+                }
+                if (_documentState.State?.Token != document.Token) return;
                 if (!BookmarkStillSaved(document, bookmark))
                 {
                     LeaveBistroView("The bookmark changed. Refresh before capturing again.");
@@ -294,9 +316,15 @@ public sealed partial class MainWindow
                 }
                 if (frame is null) { ShowNavigationMessage(error ?? "Capture unavailable."); return; }
                 var bitmap = BookmarkComparisonWindow.ReadImage(path, frame.View.Extent, reference: false);
+                if (!BookmarkProjectionCurrent)
+                {
+                    bitmap.Dispose();
+                    LeaveBistroView(BookmarkProjectionChanged);
+                    return;
+                }
                 if (_bookmarkComparison is null)
                 {
-                    _bookmarkComparison = new BookmarkComparisonWindow(Current);
+                    _bookmarkComparison = new BookmarkComparisonWindow(() => Current() && BookmarkProjectionCurrent);
                     _bookmarkComparison.Closed += (_, _) => _bookmarkComparison = null;
                     _bookmarkComparison.Show(this);
                 }
@@ -310,7 +338,7 @@ public sealed partial class MainWindow
                 if (error?.Contains("outcome unknown", StringComparison.Ordinal) != true) DeleteBistroOutput(path);
                 if (Current()) { _bistroCapturing = false; UpdateViewportNavigationActions(); }
             }
-        });
+        }, settledGeneration: projection);
     }
 }
 
