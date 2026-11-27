@@ -135,7 +135,7 @@ TEST_CASE("remote codec: look captures correlate both PNGs and the settled proje
 TEST_CASE("remote codec: material diagnostic pair guards target and output provenance", "[remote][codec][material-diagnostic]") {
   namespace c = atlantis::connection;
   c::ViewportCamera camera{{1,0,0,0,0,1,0,0,0,0,1,0,0,0,2,1}, 1.0f, 0.1f, 200.0f};
-  const auto asset = [](int id) { return atlantis::asset_system::AssetGuid{entity(id).bytes}; };
+  const auto asset = [](std::uint8_t id) { return atlantis::asset_system::AssetGuid{entity(id).bytes}; };
   const c::MaterialDiagnosticRequest request{{entity(1), 7}, {entity(2).bytes}, 4, camera,
       {800, 600}, {entity(3), asset(4), asset(5)}, {"D:/normal.png", "D:/base.png"}, c::ViewportStamp{4, 2}};
   const auto wire = overTheWire(codec::encode(request));
