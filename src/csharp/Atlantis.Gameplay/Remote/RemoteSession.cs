@@ -450,6 +450,25 @@ public sealed class RemoteControl
         }
     }
 
+    public DirectionalShadowDiagnosticResult CaptureDirectionalShadowDiagnostic(DirectionalShadowDiagnosticRequest request)
+    {
+        const string method = "control.captureDirectionalShadowDiagnostic";
+        if (!request.Extent.IsValid) return new(null, RenderLookCaptureError.InvalidRequest);
+        if (!Status().SupportsDirectionalShadowDiagnosticCapture) return new(null, RenderLookCaptureError.Unsupported);
+        try
+        {
+            var outcome = _session.InBand<DirectionalShadowDiagnosticPair, RenderLookCaptureError>(
+                _session.Call(method, Codec.Encode(request)), method,
+                value => Codec.DecodeDirectionalShadowDiagnosticPair(value, request), Codec.DecodeRenderLookCaptureError);
+            return outcome.IsOk ? new(outcome.Value, null) : new(null, outcome.Error);
+        }
+        catch (RemoteException error)
+        {
+            throw new RemoteException(error.Error,
+                "Capture outcome unknown. Verify both output paths and the current projection before retrying. " + error.Message);
+        }
+    }
+
     public RenderLookCaptureResult CaptureRenderLook(RenderLookCaptureRequest request)
     {
         const string method = "control.captureRenderLook";

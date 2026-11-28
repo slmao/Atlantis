@@ -141,6 +141,11 @@ class OwnedSchema {
 [[nodiscard]] std::optional<connection::FrameData> decodeFrameData(const Value& value);
 [[nodiscard]] Value encode(const connection::FrameReport& report);
 [[nodiscard]] std::optional<connection::FrameReport> decodeFrameReport(const Value& value);
+[[nodiscard]] Value encode(const connection::DirectionalShadowDiagnosticRequest& request);
+[[nodiscard]] std::optional<connection::DirectionalShadowDiagnosticRequest> decodeDirectionalShadowDiagnosticRequest(const Value& value);
+[[nodiscard]] Value encode(const connection::DirectionalShadowDiagnosticPair& pair);
+[[nodiscard]] std::optional<connection::DirectionalShadowDiagnosticPair> decodeDirectionalShadowDiagnosticPair(
+    const Value& value, const connection::DirectionalShadowDiagnosticRequest& request);
 [[nodiscard]] Value encode(const connection::MaterialDiagnosticRequest& request);
 [[nodiscard]] std::optional<connection::MaterialDiagnosticRequest> decodeMaterialDiagnosticRequest(const Value& value);
 [[nodiscard]] Value encode(const connection::MaterialDiagnosticPair& pair);

@@ -187,6 +187,9 @@ class RuntimeApplication {
   captureImage(const std::string& path,
                const std::optional<atlantis::connection::ViewportOverlay>& overlay = std::nullopt);
   // Frame thread, between frames. Borrows the active catalog and uses only capture-owned render targets.
+  [[nodiscard]] connection::DirectionalShadowDiagnosticResult captureDirectionalShadowDiagnostic(
+      const connection::DirectionalShadowDiagnosticRequest& request, asset_system::EntityGuid activeCamera,
+      const BootstrapConfig& config);
   [[nodiscard]] connection::MaterialDiagnosticResult captureMaterialDiagnostic(
       const connection::MaterialDiagnosticRequest& request, const asset_system::AssetCatalog& catalog,
       const BootstrapConfig& config, const std::filesystem::path& shaderDirectory);

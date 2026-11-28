@@ -143,7 +143,14 @@ connection::RuntimeStatus RuntimeControlHost::status() {
                                    target_.sceneGeneration ? target_.sceneGeneration() : 0,
                                    static_cast<bool>(target_.captureRenderLook),
                                    static_cast<bool>(target_.captureRenderLook),
-                                   static_cast<bool>(target_.captureMaterialDiagnostic)};
+                                   static_cast<bool>(target_.captureMaterialDiagnostic),
+                                   static_cast<bool>(target_.captureDirectionalShadowDiagnostic)};
+}
+
+connection::DirectionalShadowDiagnosticResult RuntimeControlHost::captureDirectionalShadowDiagnostic(
+    const connection::DirectionalShadowDiagnosticRequest& request) {
+  return target_.captureDirectionalShadowDiagnostic ? target_.captureDirectionalShadowDiagnostic(request)
+                                                     : RuntimeControl::captureDirectionalShadowDiagnostic(request);
 }
 
 connection::MaterialDiagnosticResult RuntimeControlHost::captureMaterialDiagnostic(

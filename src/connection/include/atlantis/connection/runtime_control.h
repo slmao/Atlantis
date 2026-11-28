@@ -34,6 +34,7 @@ struct RuntimeStatus {
   bool supportsRenderLookCapture = false;
   bool supportsRenderLookCaptureExtent = false;
   bool supportsMaterialDiagnosticCapture = false;
+  bool supportsDirectionalShadowDiagnosticCapture = false;
   friend bool operator==(const RuntimeStatus&, const RuntimeStatus&) = default;
 };
 
@@ -307,6 +308,27 @@ struct MaterialDiagnosticPair {
 
 using MaterialDiagnosticResult = Result<MaterialDiagnosticPair, RenderLookCaptureError>;
 
+struct DirectionalShadowDiagnosticRequest {
+  authoring::DocumentToken document;
+  authoring::ApplyId apply;
+  std::uint64_t generation;
+  ViewportCamera camera;
+  RenderLookExtent extent;
+  std::array<std::string, 2> paths;
+  std::optional<ViewportStamp> viewport;
+};
+
+struct DirectionalShadowDiagnosticPair {
+  authoring::DocumentToken document;
+  authoring::ApplyId apply;
+  std::uint64_t generation;
+  authoring::EntityGuid activeCamera;
+  FrameData frame;
+  std::array<CapturedImage, 2> images;
+};
+
+using DirectionalShadowDiagnosticResult = Result<DirectionalShadowDiagnosticPair, RenderLookCaptureError>;
+
 inline constexpr std::size_t kMaterialBindingInstances = 8192;
 inline constexpr std::size_t kMaterialBindingTriangles = 262144;
 inline constexpr std::string_view kMaterialBindingSlot = "Renderable.materialAsset";
@@ -487,6 +509,10 @@ class RuntimeControl {
   virtual void setViewportCamera(std::optional<ViewportCamera> camera) = 0;
   [[nodiscard]] virtual MaterialDiagnosticResult captureMaterialDiagnostic(const MaterialDiagnosticRequest&) {
     return MaterialDiagnosticResult::Err(RenderLookCaptureError::Unsupported);
+  }
+  [[nodiscard]] virtual DirectionalShadowDiagnosticResult captureDirectionalShadowDiagnostic(
+      const DirectionalShadowDiagnosticRequest&) {
+    return DirectionalShadowDiagnosticResult::Err(RenderLookCaptureError::Unsupported);
   }
   [[nodiscard]] virtual RenderLookCaptureResult captureRenderLook(const RenderLookCaptureRequest&) {
     return RenderLookCaptureResult::Err(RenderLookCaptureError::Unsupported);

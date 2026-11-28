@@ -516,6 +516,29 @@ int main(int argc, char** argv) {
       if (b.isErr()) return R::Err(failure(b.error()));
       return app.captureRenderLook(request, {std::move(a.value()), std::move(b.value())}, config);
     };
+    target.captureDirectionalShadowDiagnostic = [&app, &authoring, &config](
+        const atlantis::connection::DirectionalShadowDiagnosticRequest& request) {
+      namespace ac = atlantis::connection::authoring;
+      using E = atlantis::connection::RenderLookCaptureError;
+      using R = atlantis::connection::DirectionalShadowDiagnosticResult;
+      if (!request.extent.valid()) return R::Err(E::InvalidRequest);
+      auto* session = authoring.session();
+      if (!session || !session->document()) return R::Err(E::Unavailable);
+      const auto client = session->connect();
+      const auto document = client->documentState();
+      const auto apply = client->applyStatus(std::nullopt);
+      if (document.isErr() || !document.value() || document.value()->provenance != ac::Provenance::HandAuthored)
+        return R::Err(E::Unavailable);
+      if (document.value()->token != request.document || apply.isErr() || !apply.value().projection ||
+          (apply.value().request && apply.value().request->state != ac::ApplyState::Applied) ||
+          apply.value().projection->generation != request.generation ||
+          apply.value().projection->receipt.id != request.apply ||
+          apply.value().projection->receipt.documentRevision != request.document.documentRevision)
+        return R::Err(E::StaleProjection);
+      const auto activeCamera = session->document()->activeCamera;
+      if (!activeCamera) return R::Err(E::Unavailable);
+      return app.captureDirectionalShadowDiagnostic(request, *activeCamera, config);
+    };
 #if defined(ATLANTIS_RUNTIME_BASE_COLOR_SHADER_DIR)
     target.captureMaterialDiagnostic = [&app, &authoring, &assets, &config](
         const atlantis::connection::MaterialDiagnosticRequest& request) {

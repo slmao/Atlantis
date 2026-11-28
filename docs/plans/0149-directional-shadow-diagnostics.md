@@ -1,10 +1,10 @@
 # Plan 0149 — Directional Shadow Diagnostics V1
 
 - **Spec:** [Spec 0149](../specs/0149-directional-shadow-diagnostics.md)
-- **ADR:** [ADR-0195](../adr/0195-isolated-directional-shadow-diagnostic.md) (Proposed)
-- **Status:** Draft
+- **ADR:** [ADR-0195](../adr/0195-isolated-directional-shadow-diagnostic.md) (Accepted)
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending.
+- **Joint Human Review:** [Maintainer approval of `51c0a4d1`](https://github.com/slmao/Atlantis/pull/461#issuecomment-7236151632) accepts J1–J4 and authorizes S2–S4 after the maintainer merge at `464c2098`.
 
 ## Objective
 

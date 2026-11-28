@@ -1,9 +1,9 @@
 # ADR 0195 — Isolated Directional Shadow Diagnostic
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-28
 - **Deciders:** Atlantis maintainer
-- **Acceptance:** Pending joint review.
+- **Acceptance:** [Maintainer joint approval of `51c0a4d1`](https://github.com/slmao/Atlantis/pull/461#issuecomment-7236151632) on 2026-11-28.
 - **Related Spec:** [Spec 0149](../specs/0149-directional-shadow-diagnostics.md)
 - **Related decisions:** [ADR-0072](0072-directional-shadow-map-resource-pass-and-pbr-integration.md), [ADR-0192](0192-render-look-capture-descriptor-ownership.md), [ADR-0193](0193-bounded-render-look-capture-extent.md), [ADR-0194](0194-isolated-base-color-diagnostic-capture.md)
 

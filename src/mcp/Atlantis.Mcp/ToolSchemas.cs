@@ -82,6 +82,16 @@ internal static class ToolSchemas
         return JsonSerializer.SerializeToElement(fields);
     }
 
+    internal static JsonElement DirectionalShadowDiagnosticCapture()
+    {
+        var fields = Object(("document", Object(("documentId", String), ("documentRevision", Integer))),
+            ("applyId", String), ("generation", Integer), ("camera", Camera),
+            ("extent", Object(("width", Integer), ("height", Integer))),
+            ("outputs", Vector(String, 2)), ("viewport", Object(("sceneGeneration", Integer), ("revision", Integer))));
+        fields["required"] = new JsonArray("document", "applyId", "generation", "camera", "extent", "outputs");
+        return JsonSerializer.SerializeToElement(fields);
+    }
+
     internal static JsonElement RenderLookCapture()
     {
         var fields = Object(("guard", RenderLookGuard), ("applyId", String), ("generation", Integer), ("camera", Camera),

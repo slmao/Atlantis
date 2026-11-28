@@ -527,6 +527,8 @@ public static partial class Codec
             .Set("scene", Encode(status.Scene)).Set("sceneGeneration", JsonValue.Number(status.SceneGeneration));
         if (status.SupportsRenderLookCapture) value.Set("supportsRenderLookCapture", JsonValue.Bool(true));
         if (status.SupportsRenderLookCaptureExtent) value.Set("supportsRenderLookCaptureExtent", JsonValue.Bool(true));
+        if (status.SupportsDirectionalShadowDiagnosticCapture)
+            value.Set("supportsDirectionalShadowDiagnosticCapture", JsonValue.Bool(true));
         if (status.SupportsMaterialDiagnosticCapture) value.Set("supportsMaterialDiagnosticCapture", JsonValue.Bool(true));
         return value;
     }
@@ -549,6 +551,7 @@ public static partial class Codec
         {
             SupportsRenderLookCapture = value.Find("supportsRenderLookCapture") is { IsBool: true, AsBool: true },
             SupportsRenderLookCaptureExtent = value.Find("supportsRenderLookCaptureExtent") is { IsBool: true, AsBool: true },
+            SupportsDirectionalShadowDiagnosticCapture = value.Find("supportsDirectionalShadowDiagnosticCapture") is { IsBool: true, AsBool: true },
             SupportsMaterialDiagnosticCapture = value.Find("supportsMaterialDiagnosticCapture") is { IsBool: true, AsBool: true }
         };
     }
@@ -610,6 +613,59 @@ public static partial class Codec
         if (normal is null || color is null || !normal.Data.View.SequenceEqual(color.Data.View) ||
             !normal.Data.Projection.SequenceEqual(color.Data.Projection)) return null;
         return new(request.Document, request.Apply, request.Generation, request.Target, texture, factor, normal, color);
+
+        FrameReport? Read(JsonValue entry, string role, string path) =>
+            Exact(entry, 2) && entry.Find("role") is { IsString: true } r && r.AsString == role &&
+            entry.Find("capture") is { } c && DecodeFrameReport(c) is { Frame: 0, Applied: false, Image: { } image } frame &&
+            image.Path == path && image.Width == request.Extent.Width && image.Height == request.Extent.Height ? frame : null;
+    }
+
+    public static JsonValue Encode(DirectionalShadowDiagnosticRequest request)
+    {
+        var value = JsonValue.NewObject().Set("document", Encode(request.Document))
+            .Set("applyId", JsonValue.String(request.Apply.ToString())).Set("generation", JsonValue.Number(request.Generation))
+            .Set("camera", Encode(request.Camera))
+            .Set("extent", JsonValue.NewObject().Set("width", JsonValue.Number((ulong)request.Extent.Width))
+                .Set("height", JsonValue.Number((ulong)request.Extent.Height)))
+            .Set("outputs", JsonValue.NewArray().Push(JsonValue.String(request.NormalPath)).Push(JsonValue.String(request.WithoutDirectionalShadowsPath)));
+        if (request.Viewport is { } viewport) value.Set("viewport", Encode(viewport));
+        return value;
+    }
+
+    public static DirectionalShadowDiagnosticRequest? DecodeDirectionalShadowDiagnosticRequest(JsonValue value)
+    {
+        var viewport = value.Find("viewport");
+        if (!Exact(value, viewport is null ? 6 : 7) ||
+            value.Find("document") is not { } d || DecodeDocumentToken(d) is not A.DocumentToken document ||
+            value.Find("applyId") is not { IsString: true } a || !A.ApplyId.TryParse(a.AsString, out var apply) ||
+            value.Find("generation") is not { } g || DecodeUInt64(g) is not ulong generation ||
+            value.Find("camera") is not { } c || DecodeViewportCamera(c) is not { } camera ||
+            value.Find("extent") is not { } extent || !Exact(extent, 2) ||
+            extent.Find("width") is not { } w || DecodeUInt64(w) is not ulong width || width > 1920 ||
+            extent.Find("height") is not { } h || DecodeUInt64(h) is not ulong height || height > 1920 ||
+            value.Find("outputs") is not { IsArray: true } outputs || outputs.Items.Count != 2 ||
+            outputs.Items.Any(path => !path.IsString)) return null;
+        var size = new RenderLookExtent((uint)width, (uint)height);
+        var stamp = viewport is null ? null : DecodeViewportStamp(viewport);
+        if (!size.IsValid || (viewport is not null && stamp?.SceneGeneration != generation)) return null;
+        return new(document, apply, generation, camera, size, outputs.Items[0].AsString, outputs.Items[1].AsString, stamp);
+    }
+
+    public static DirectionalShadowDiagnosticPair? DecodeDirectionalShadowDiagnosticPair(
+        JsonValue value, DirectionalShadowDiagnosticRequest request)
+    {
+        if (!Exact(value, 5) || value.Find("document") is not { } doc || DecodeDocumentToken(doc) != request.Document ||
+            value.Find("applyId") is not { IsString: true } a || a.AsString != request.Apply.ToString() ||
+            value.Find("generation") is not { } g || DecodeUInt64(g) != request.Generation ||
+            value.Find("activeCamera") is not { } active || DecodeEntity(active) is not EntityGuid { IsNil: false } activeCamera ||
+            value.Find("captures") is not { IsArray: true } captures || captures.Items.Count != 2)
+            return null;
+        var normal = Read(captures.Items[0], "normal", request.NormalPath);
+        var unshadowed = Read(captures.Items[1], "withoutDirectionalShadows", request.WithoutDirectionalShadowsPath);
+        if (normal is null || unshadowed is null || Json.Write(Encode(normal.Data)) != Json.Write(Encode(unshadowed.Data)) ||
+            normal.Data.DirectionalLights is not [var sun] || sun.Intensity <= 0 ||
+            (sun.Color.X <= 0 && sun.Color.Y <= 0 && sun.Color.Z <= 0)) return null;
+        return new(request.Document, request.Apply, request.Generation, activeCamera, normal, unshadowed);
 
         FrameReport? Read(JsonValue entry, string role, string path) =>
             Exact(entry, 2) && entry.Find("role") is { IsString: true } r && r.AsString == role &&

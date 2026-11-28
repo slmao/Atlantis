@@ -10,6 +10,7 @@ public sealed record RuntimeStatus(bool Paused, ulong Frame, AssetGuid Scene, ul
 {
     public bool SupportsRenderLookCapture { get; init; }
     public bool SupportsRenderLookCaptureExtent { get; init; }
+    public bool SupportsDirectionalShadowDiagnosticCapture { get; init; }
     public bool SupportsMaterialDiagnosticCapture { get; init; }
 }
 
@@ -114,6 +115,15 @@ public sealed record MaterialDiagnosticPair(Authoring.DocumentToken Document, Au
     MaterialDiagnosticTarget Target, AssetGuid Texture, Vector3 Factor, FrameReport Normal, FrameReport BaseColor);
 
 public sealed record MaterialDiagnosticResult(MaterialDiagnosticPair? Pair, RenderLookCaptureError? Error);
+
+public sealed record DirectionalShadowDiagnosticRequest(Authoring.DocumentToken Document, Authoring.ApplyId Apply,
+    ulong Generation, ViewportCamera Camera, RenderLookExtent Extent, string NormalPath,
+    string WithoutDirectionalShadowsPath, ViewportStamp? Viewport = null);
+
+public sealed record DirectionalShadowDiagnosticPair(Authoring.DocumentToken Document, Authoring.ApplyId Apply,
+    ulong Generation, EntityGuid ActiveCamera, FrameReport Normal, FrameReport WithoutDirectionalShadows);
+
+public sealed record DirectionalShadowDiagnosticResult(DirectionalShadowDiagnosticPair? Pair, RenderLookCaptureError? Error);
 
 public enum ViewportBoundsKind { Mesh, Origin }
 

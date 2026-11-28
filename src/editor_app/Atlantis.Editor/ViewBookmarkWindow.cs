@@ -25,6 +25,9 @@ public sealed partial class MainWindow
     private ViewBookmark? _activeBookmark;
     private BookmarkComparisonWindow? _bookmarkComparison;
     private Button? _bookmarkCapture;
+    private Button? _shadowCapture;
+    private Window? _directionalShadowComparison;
+    private Func<bool>? _directionalShadowCurrent;
     private bool _bookmarkSamplePending;
     private long _bookmarkStoreRevision;
     private ulong? _bookmarkProjection;
@@ -56,6 +59,9 @@ public sealed partial class MainWindow
         if (_bookmarkCapture is { } capture)
             capture.IsEnabled = _activeBookmark is not null && _bistroReady && BookmarkProjectionCurrent && !_navigationPending &&
                 !_bistroCapturing && !_bistroApplyBlocked && !_play.IsEnabled && navigation && BookmarkAllowed;
+        if (_shadowCapture is { } shadow)
+            shadow.IsEnabled = _bookmarkCapture?.IsEnabled == true && BistroVisibilityAllowed;
+        if (_directionalShadowCurrent?.Invoke() == false) _directionalShadowComparison?.Close();
     }
 
     private void ObserveBookmarkDocument(DocumentObservation previous, DocumentObservation observation)
@@ -77,6 +83,7 @@ public sealed partial class MainWindow
     private void CloseBookmarkComparison()
     {
         CloseMaterialDiagnostic();
+        _directionalShadowComparison?.Close();
         _bookmarkComparison?.Close();
         _bookmarkComparison = null;
     }
@@ -98,8 +105,16 @@ public sealed partial class MainWindow
         var remove = new Button { Content = "Remove" };
         var refresh = new Button { Content = "Refresh" };
         var capture = new Button { Content = "Capture and Compare", IsEnabled = false };
+        var shadows = new Button { Content = "Compare Directional Shadows", IsEnabled = false };
         _bookmarkCapture = capture;
+        _shadowCapture = shadows;
         var notice = new TextBlock { TextWrapping = TextWrapping.Wrap };
+        shadows.AddHandler(PointerPressedEvent, (_, e) =>
+        {
+            if (!BistroLocatorProtected()) return;
+            e.Handled = true;
+            notice.Text = "Finish the current draft or gesture before comparing directional shadows.";
+        }, RoutingStrategies.Tunnel);
         var window = new Window
         {
             Title = "View Bookmarks", Width = 540, Height = 360, MinWidth = 440, MinHeight = 310,
@@ -107,7 +122,8 @@ public sealed partial class MainWindow
             Content = new ScrollViewer { Content = new StackPanel
             {
                 Margin = new Thickness(14), Spacing = 8,
-                Children = { entries, EditorVisuals.Actions(name, save), EditorVisuals.Actions(go, capture, remove, refresh), notice }
+                Children = { entries, EditorVisuals.Actions(name, save), EditorVisuals.Actions(go, capture, remove, refresh),
+                    EditorVisuals.Actions(shadows), notice }
             } }
         };
         _bookmarkWindow = window;
@@ -173,6 +189,7 @@ public sealed partial class MainWindow
         {
             _bookmarkWindow = null;
             _bookmarkCapture = null;
+            _shadowCapture = null;
             _bookmarkSamplePending = false;
         };
         entries.SelectionChanged += (_, _) => Controls();
@@ -184,6 +201,7 @@ public sealed partial class MainWindow
             else notice.Text = FitMessage(bookmark.View);
         };
         capture.Click += (_, _) => { if (CanAct() && VerifyRevision()) CaptureBookmarkView(); };
+        shadows.Click += (_, _) => { if (CanAct() && VerifyRevision()) CaptureDirectionalShadowView(); };
         remove.Click += async (_, _) =>
         {
             if (!CanAct() || library is not { } reviewed || store is not { } destination ||
@@ -340,6 +358,83 @@ public sealed partial class MainWindow
                 if (Current()) { _bistroCapturing = false; UpdateViewportNavigationActions(); }
             }
         }, settledGeneration: projection);
+    }
+
+    private void CaptureDirectionalShadowView()
+    {
+        if (_worker is not { } worker || _documentState.State is not { } document || _activeBookmark is not { } bookmark ||
+            !_bistroReady || _bistroCapturing || _bistroApplyBlocked || !BookmarkProjectionCurrent ||
+            _bookmarkProjection is not ulong generation || !BistroVisibilityAllowed || BistroLocatorProtected() ||
+            _viewport.Window is not { } view || !BistroFixedDrawable(view, bookmark.View) ||
+            !BookmarkStillSaved(document, bookmark))
+        {
+            ShowNavigationMessage("Return to the bookmark after settling Apply and restore default viewport visibility.");
+            return;
+        }
+        _directionalShadowComparison?.Close();
+        long revision = _bistroRevision;
+        long camera = _viewportCameraIntent;
+        bool SameView() => !_shuttingDown && ReferenceEquals(worker, _worker) &&
+            _activeBookmark == bookmark && _bistroRevision == revision && _viewportCameraIntent == camera;
+        bool Current() => SameView() && _documentState.State?.Token == document.Token &&
+            _bistroReady && _bookmarkProjection == generation && BookmarkProjectionCurrent && BistroVisibilityAllowed &&
+            _viewport.Window is { } drawable && BistroFixedDrawable(drawable, bookmark.View);
+        string stem = Path.Combine(_workDirectory, "directional-shadow-" + Guid.NewGuid().ToString("N"));
+        string normalPath = stem + "-normal.png", unshadowedPath = stem + "-unshadowed.png";
+        _bistroCapturing = true;
+        ShowNavigationMessage("Capturing directional shadow comparison…");
+        UpdateViewportNavigationActions();
+        worker.CaptureDirectionalShadowDiagnostic(document.Token, camera, generation, bookmark.View, normalPath,
+            unshadowedPath, (pair, message) =>
+        {
+            Bitmap? normal = null, unshadowed = null;
+            try
+            {
+                if (!SameView()) return;
+                if (!Current() || BistroLocatorProtected() || !BookmarkStillSaved(document, bookmark))
+                {
+                    ShowNavigationMessage("The comparison expired. Return to the current settled bookmark.");
+                    return;
+                }
+                if (pair is null) { ShowNavigationMessage(message); return; }
+                normal = BookmarkComparisonWindow.ReadImage(normalPath, bookmark.View.Extent, reference: false);
+                unshadowed = BookmarkComparisonWindow.ReadImage(unshadowedPath, bookmark.View.Extent, reference: false);
+                if (!Current() || !BookmarkStillSaved(document, bookmark)) return;
+                var sun = pair.Normal.Data.DirectionalLights.Single();
+                var identity = EditorVisuals.Secondary(FormattableString.Invariant(
+                    $"{bookmark.View.Name} · Projection {pair.Generation} · {bookmark.View.Extent.Width} × {bookmark.View.Extent.Height}"));
+                var lighting = EditorVisuals.Secondary(FormattableString.Invariant(
+                    $"Directional light {sun.Intensity:G4} · direction {sun.Direction} · color {sun.Color} · exposure {pair.Normal.Data.ExposureCompensationEv?.ToString("G") ?? "unknown"} EV"));
+                lighting.TextWrapping = TextWrapping.Wrap;
+                var treatment = EditorVisuals.Secondary("Both images retain directional illumination and the scene's camera effects.");
+                var summary = EditorVisuals.Stack(6, identity, lighting, treatment);
+                var dialog = BuildDiagnosticComparison("Directional Shadow Diagnostic", "Without directional shadows",
+                    summary, normal, unshadowed);
+                _directionalShadowComparison = dialog;
+                _directionalShadowCurrent = Current;
+                dialog.Closed += (_, _) =>
+                {
+                    _directionalShadowComparison = null;
+                    _directionalShadowCurrent = null;
+                };
+                dialog.Show(this);
+                normal = unshadowed = null;
+                ShowNavigationMessage(message);
+            }
+            catch (Exception failure) when (failure is IOException or UnauthorizedAccessException or ArgumentException or InvalidOperationException)
+            { ShowNavigationMessage("Directional shadow comparison unavailable. " + failure.Message); }
+            finally
+            {
+                normal?.Dispose();
+                unshadowed?.Dispose();
+                if (!message.Contains("outcome unknown", StringComparison.OrdinalIgnoreCase))
+                {
+                    DeleteBistroOutput(normalPath);
+                    DeleteBistroOutput(unshadowedPath);
+                }
+                if (SameView()) { _bistroCapturing = false; UpdateViewportNavigationActions(); }
+            }
+        });
     }
 }
 

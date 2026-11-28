@@ -1160,6 +1160,30 @@ contains `document <id> <revision>`, `projection <apply-id> <generation>`,
 `target <entity> <mesh> <material>` rows. An optional
 `viewport <generation> <revision>` precedes the two ordered `output` rows.
 
+### Directional shadow diagnostic capture
+
+`control.status` advertises the optional true
+`supportsDirectionalShadowDiagnosticCapture`. The closed
+`control.captureDirectionalShadowDiagnostic` request carries the existing
+`document`, `applyId`, `generation`, `camera`, `extent`, two ordered
+absolute PNG `outputs` and optional hosted `viewport` stamp. An omitted or
+invalid capability leaves the new method unsupported.
+
+The result echoes document, Apply and generation, adds the verified
+`activeCamera` GUID, and returns ordered `captures` with roles `normal` and
+`withoutDirectionalShadows`. The two ordinary FrameReports use `frame: 0`
+and `applied: false`, match the requested paths and physical sizes, and
+carry the same render basis including directional light and exposure.
+Use the existing render capture errors. A lost receipt leaves the result
+unknown and preserves the connection error category. Inspect both
+destinations before retrying.
+
+The `runtime capture-directional-shadow-diagnostic <manifest>` CLI
+manifest has `document`, `projection`, `camera`, `extent`, optional
+`viewport` and two `output` rows in that order. The MCP tool is
+`control.capture_directional_shadow_diagnostic`.
+See [ADR-0195](../adr/0195-isolated-directional-shadow-diagnostic.md).
+
 ### Managed asset import
 
 [Spec 0086](../specs/0086-new-asset-import.md#requirements) defines
