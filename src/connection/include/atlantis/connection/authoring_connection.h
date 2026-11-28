@@ -362,12 +362,12 @@ enum class Error : std::uint8_t {
   DuplicateBatchStaleRevision,
   InvalidGuardedNameBatch,
   NameBatchStaleDocument,
-  InvalidSceneEnvironment,
-  SceneEnvironmentStaleDocument,
-  SceneEnvironmentUnavailable,
   InvalidGuardedRenderLook,
   RenderLookStaleDocument,
   RenderLookTargetChanged,
+  InvalidSceneEnvironment,
+  SceneEnvironmentStaleDocument,
+  SceneEnvironmentUnavailable,
 };
 
 [[nodiscard]] std::string_view toString(Error error) noexcept;

@@ -289,12 +289,12 @@ public enum AuthoringError
     DuplicateBatchStaleRevision,
     InvalidGuardedNameBatch,
     NameBatchStaleDocument,
-    InvalidSceneEnvironment,
-    SceneEnvironmentStaleDocument,
-    SceneEnvironmentUnavailable,
     InvalidGuardedRenderLook,
     RenderLookStaleDocument,
     RenderLookTargetChanged,
+    InvalidSceneEnvironment,
+    SceneEnvironmentStaleDocument,
+    SceneEnvironmentUnavailable,
 }
 
 /// <summary>
