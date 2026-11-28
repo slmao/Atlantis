@@ -210,6 +210,9 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
         Declare("control.pick_material_binding", "control.pickMaterialBinding",
             "Read the single explicit material binding at the nearest unambiguous opaque surface.", ControlModel,
             ToolSchemas.MaterialBindingParameters()),
+        Declare("control.capture_directional_shadow_diagnostic", "control.captureDirectionalShadowDiagnostic",
+            "Compare normal shading and shading without directional shadows at one applied view.", ControlModel,
+            ToolSchemas.DirectionalShadowDiagnosticCapture()),
         Declare("control.capture_material_diagnostic", "control.captureMaterialDiagnostic",
             "Capture normal shading and isolated base color for one verified material binding.", ControlModel,
             ToolSchemas.MaterialDiagnosticCapture()),
@@ -303,6 +306,7 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
             if (mapping.Method is "control.viewportVisibility" or "control.setViewportVisibility" or "control.pickViewport")
                 return ViewportPolicyCall(mapping.Method, wireParameters);
             if (mapping.Method == "control.pickMaterialBinding") return PickMaterialBinding(wireParameters);
+            if (mapping.Method == "control.captureDirectionalShadowDiagnostic") return CaptureDirectionalShadowDiagnostic(wireParameters);
             if (mapping.Method == "control.captureMaterialDiagnostic") return CaptureMaterialDiagnostic(wireParameters);
             if (mapping.Method == "control.captureRenderLook") return CaptureRenderLook(wireParameters);
             if (mapping.Method == "control.pickAlignmentFaces") return PickAlignmentFaces(wireParameters);
@@ -639,6 +643,29 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
         if (result.Find("err") is { } refusal && Codec.DecodeRenderLookCaptureError(refusal) is not null)
             return Forward(result, true);
         if (result.Find("ok") is { } pair && Codec.DecodeMaterialDiagnosticPair(pair, request) is not null)
+            return Forward(result, false);
+        return Error("ProtocolError: capture outcome unknown. Verify both output paths before retrying.");
+    }
+
+    private CallToolResult CaptureDirectionalShadowDiagnostic(JsonValue parameters)
+    {
+        if (Codec.DecodeDirectionalShadowDiagnosticRequest(parameters) is not { } request)
+            return Error("InvalidArguments: expected a settled projection and bounded capture.");
+        var status = session.Request("control.status", JsonValue.NewObject());
+        if (status.Find("error") is { } failure) return Forward(failure, true);
+        if (status.Find("result") is not { } value || Codec.DecodeStatus(value) is not { } runtime)
+            return Error("ProtocolError: malformed control status.");
+        if (!runtime.SupportsDirectionalShadowDiagnosticCapture)
+            return Forward(JsonValue.NewObject().Set("err", JsonValue.String("Unsupported")), true);
+        var response = session.Request("control.captureDirectionalShadowDiagnostic", Codec.Encode(request));
+        if (response.Find("error") is { } error)
+            return Forward(JsonValue.NewObject().Set("error", error)
+                .Set("guidance", JsonValue.String("Capture outcome unknown. Verify both output paths before retrying.")), true);
+        if (response.Find("result") is not { IsObject: true } result || result.Members.Count != 1)
+            return Error("ProtocolError: capture outcome unknown. Verify both output paths before retrying.");
+        if (result.Find("err") is { } refusal && Codec.DecodeRenderLookCaptureError(refusal) is not null)
+            return Forward(result, true);
+        if (result.Find("ok") is { } pair && Codec.DecodeDirectionalShadowDiagnosticPair(pair, request) is not null)
             return Forward(result, false);
         return Error("ProtocolError: capture outcome unknown. Verify both output paths before retrying.");
     }

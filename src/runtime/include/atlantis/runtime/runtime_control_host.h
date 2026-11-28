@@ -93,6 +93,8 @@ class RuntimeControlHost final : public atlantis::connection::RuntimeControl {
         const atlantis::connection::RenderLookCaptureRequest&)> captureRenderLook{};
     std::function<atlantis::connection::MaterialDiagnosticResult(
         const atlantis::connection::MaterialDiagnosticRequest&)> captureMaterialDiagnostic{};
+    std::function<atlantis::connection::DirectionalShadowDiagnosticResult(
+        const atlantis::connection::DirectionalShadowDiagnosticRequest&)> captureDirectionalShadowDiagnostic{};
   };
   [[nodiscard]] static Target forApplication(RuntimeApplication& application);
 
@@ -124,6 +126,8 @@ class RuntimeControlHost final : public atlantis::connection::RuntimeControl {
   void setViewportCamera(std::optional<atlantis::connection::ViewportCamera> camera) override;
   [[nodiscard]] atlantis::connection::MaterialDiagnosticResult captureMaterialDiagnostic(
       const atlantis::connection::MaterialDiagnosticRequest& request) override;
+  [[nodiscard]] atlantis::connection::DirectionalShadowDiagnosticResult captureDirectionalShadowDiagnostic(
+      const atlantis::connection::DirectionalShadowDiagnosticRequest& request) override;
   [[nodiscard]] atlantis::connection::RenderLookCaptureResult captureRenderLook(
       const atlantis::connection::RenderLookCaptureRequest& request) override;
   [[nodiscard]] atlantis::connection::ViewportVisibilityResult viewportVisibility() override;

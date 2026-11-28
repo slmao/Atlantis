@@ -19,7 +19,7 @@ internal static partial class Program
     {
         "create_node", "destroy_node", "set_properties", "add_component", "remove_component",
         "set_parent", "set_active_camera", "world.drain_events", "authoring.drain_events",
-        "control.capture_render_look", "control.capture_material_diagnostic",
+        "control.capture_render_look", "control.capture_material_diagnostic", "control.capture_directional_shadow_diagnostic",
     });
 
     private static (string Tool, string Args, string Commands)[] CompositionCases =>
@@ -42,8 +42,8 @@ internal static partial class Program
 
     private static void CompositionChecks(string repo)
     {
-        Check(ToolRegistry.AllMappings.Length == 99 && ToolRegistry.AllMappings.Select(m => m.Tool.Name).Distinct().Count() == 99,
-            "99 unique approved tools including render look capture");
+        Check(ToolRegistry.AllMappings.Length == 100 && ToolRegistry.AllMappings.Select(m => m.Tool.Name).Distinct().Count() == 100,
+            "100 unique approved tools including directional shadow capture");
         FakeSession oldCapture = new() { Response =
             $$$"""{"result":{"paused":false,"frame":5,"scene":"{{{Entity}}}","sceneGeneration":1}}""" };
         JsonValue values = JsonValue.NewArray();
@@ -86,6 +86,19 @@ internal static partial class Program
             "diagnostic request decodes its exact drawable");
         diagnosticArguments.Set("extent", Json.Parse("""{"width":800,"height":600,"padding":1}"""));
         Check(Codec.DecodeMaterialDiagnosticRequest(diagnosticArguments) is null, "diagnostic uses an exact extent object");
+        var shadow = JsonValue.NewObject()
+            .Set("document", Json.Parse($$$"""{"documentId":"{{{Entity}}}","documentRevision":7}"""))
+            .Set("applyId", JsonValue.String(Entity)).Set("generation", JsonValue.Number(1UL))
+            .Set("camera", Json.Parse(Camera)).Set("extent", Json.Parse("""{"width":800,"height":600}"""))
+            .Set("outputs", Json.Parse("""["D:/normal.png","D:/unshadowed.png"]"""));
+        var legacyShadow = new FakeSession { Response =
+            $$$"""{"result":{"paused":false,"frame":5,"scene":"{{{Entity}}}","sceneGeneration":1,"supportsDirectionalShadowDiagnosticCapture":"true"}}""" };
+        Check(new ToolRegistry(legacyShadow).Invoke(Request("control.capture_directional_shadow_diagnostic", Json.Write(shadow))).IsError == true &&
+            legacyShadow.Calls.Single().Method == "control.status", "shadow comparison checks a true capability before sending");
+        Check(Codec.DecodeDirectionalShadowDiagnosticRequest(shadow)?.Extent == new RenderLookExtent(800, 600),
+            "shadow diagnostic accepts the bounded request without a material target");
+        shadow.Set("viewport", Json.Parse("""{"sceneGeneration":2,"revision":1}"""));
+        Check(Codec.DecodeDirectionalShadowDiagnosticRequest(shadow) is null, "shadow diagnostic rejects a mixed viewport generation");
         FakeSession oldGroupHost = new() { Response =
             """{"error":{"code":"BadRequest","message":"unknown or malformed asset query"}}""" };
         var groupResult = new ToolRegistry(oldGroupHost).Invoke(Request("assets.static_group", "{\"guid\":\"" + Entity + "\"}"));

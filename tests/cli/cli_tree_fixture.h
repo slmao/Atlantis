@@ -108,8 +108,14 @@ class FakeRuntime final : public connection::RuntimeControl {
 
   connection::RuntimeStatus status() override {
     connection::RuntimeStatus result{paused_, frame_, atlantis::asset_system::parseAssetGuid(kScene).value()};
+    result.supportsDirectionalShadowDiagnosticCapture = static_cast<bool>(shadowDiagnostic);
     result.supportsMaterialDiagnosticCapture = static_cast<bool>(materialDiagnostic);
     return result;
+  }
+  std::function<connection::DirectionalShadowDiagnosticResult(const connection::DirectionalShadowDiagnosticRequest&)> shadowDiagnostic;
+  connection::DirectionalShadowDiagnosticResult captureDirectionalShadowDiagnostic(
+      const connection::DirectionalShadowDiagnosticRequest& request) override {
+    return shadowDiagnostic ? shadowDiagnostic(request) : RuntimeControl::captureDirectionalShadowDiagnostic(request);
   }
   std::function<connection::MaterialDiagnosticResult(const connection::MaterialDiagnosticRequest&)> materialDiagnostic;
   connection::MaterialDiagnosticResult captureMaterialDiagnostic(

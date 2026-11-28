@@ -1,12 +1,12 @@
 # Spec 0149 — Directional Shadow Diagnostics V1
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-28
 - **Design baseline:** `35c3f7dc` on `main`, maintainer merge of [PR #460](https://github.com/slmao/Atlantis/pull/460)
 - **Related Plan:** [Plan 0149](../plans/0149-directional-shadow-diagnostics.md)
-- **Related ADR:** [ADR-0195](../adr/0195-isolated-directional-shadow-diagnostic.md) (Proposed)
-- **Approval:** Pending joint review.
+- **Related ADR:** [ADR-0195](../adr/0195-isolated-directional-shadow-diagnostic.md) (Accepted)
+- **Approval:** [Maintainer joint approval of `51c0a4d1`](https://github.com/slmao/Atlantis/pull/461#issuecomment-7236151632).
 
 ## Summary and motivation
 

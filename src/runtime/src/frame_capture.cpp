@@ -72,6 +72,7 @@ struct CaptureVariant {
   FrameLightingData lighting;
   std::vector<DrawItem> items;
   std::vector<rhi::Pipeline*> pipelines;
+  bool omitDirectionalShadowCasters = false;
 };
 
 connection::FrameData toFrameData(const FrameLightingData& lighting, const CameraMatrices& camera,
@@ -303,7 +304,8 @@ std::optional<connection::RenderLookCaptureError> RuntimeApplication::captureNor
       for (std::size_t p = 0; p < bloomPipelines.size(); ++p) bloom->pipelines[p] = bloomPipelines[p].get();
     }
     const auto position = extractCameraWorldPosition(active.worldMatrix);
-    const auto casters = variant.lighting.directionalLightCount == 0 ? std::span<const DrawItem>{} : std::span(variant.items);
+    const auto casters = variant.omitDirectionalShadowCasters || variant.lighting.directionalLightCount == 0
+        ? std::span<const DrawItem>{} : std::span(variant.items);
     renderer_.drawFrame(*commands.value(), *scratch->target, *scratch->depth, *scratch->camera, variant.items,
         rhi::ResourceState::TransferSource, *scratch->hdr, *fullscreenTriangleVertexBuffer_,
         *fullscreenTriangleIndexBuffer_, *output, *outputTransformSampler_, active.camera.exposureCompensationEv,
@@ -441,6 +443,45 @@ std::optional<connection::RenderLookCaptureError> RuntimeApplication::captureBas
   if (!encoded) return E::CaptureFailed;
   png = std::move(*encoded);
   return {};
+}
+
+connection::DirectionalShadowDiagnosticResult RuntimeApplication::captureDirectionalShadowDiagnostic(
+    const connection::DirectionalShadowDiagnosticRequest& request, asset_system::EntityGuid activeCamera,
+    const BootstrapConfig& config) {
+  using E = connection::RenderLookCaptureError;
+  using R = connection::DirectionalShadowDiagnosticResult;
+  if (const auto error = checkCaptureAdmission(request.extent, request.generation, request.paths)) return R::Err(*error);
+  if (!scene_) return R::Err(E::Unavailable);
+  if (request.viewport && (!viewportVisibilityEnabled_ || *request.viewport != visibilityStamp() ||
+                           presentedVisibility_ != *request.viewport || visibility_)) return R::Err(E::StaleProjection);
+  auto active = collectActiveCamera(*scene_);
+  if (!active || scene_->entities.find(activeCamera) != scene_->activeCamera) return R::Err(E::StaleProjection);
+  const auto lighting = extractFrameLightingData(collectLights(*scene_));
+  if (lighting.isErr() || lighting.value().directionalLightCount != 1) return R::Err(E::Unavailable);
+  const auto& sun = lighting.value().directionalLights[0];
+  if (sun.intensity <= 0 || std::ranges::none_of(sun.color, [](float channel) { return channel > 0; }))
+    return R::Err(E::Unavailable);
+  const rhi::Extent2D extent{request.extent.width, request.extent.height};
+  const auto camera = extractCameraMatrices(request.camera.worldMatrix, request.camera.fovYRadians,
+      request.camera.nearZ, request.camera.farZ, static_cast<float>(extent.width) / static_cast<float>(extent.height));
+  if (camera.isErr()) return R::Err(E::InvalidRequest);
+  const auto renderables = collectRenderables(*scene_);
+  for (const auto& item : renderables) {
+    if (!meshResourceMap_.contains(item.renderable.meshAsset) ||
+        (item.renderable.materialAsset && !materialResourceMap_.contains(*item.renderable.materialAsset)))
+      return R::Err(E::Unavailable);
+  }
+  active->worldMatrix = request.camera.worldMatrix;
+  const detail::CaptureVariant normal{*active, lighting.value(), assembleCaptureDrawItems(renderables), {}};
+  std::array variants{normal, normal};
+  variants[1].omitDirectionalShadowCasters = true;
+  std::array<std::vector<std::uint8_t>, 2> pngs;
+  if (const auto error = captureNormalFrames(extent, camera.value(), variants, pngs, config)) return R::Err(*error);
+  if (!saveLookPair(request.paths, pngs)) return R::Err(E::CaptureFailed);
+  return R::Ok({request.document, request.apply, request.generation, activeCamera,
+      detail::toFrameData(lighting.value(), camera.value(), normal.items.size(), active->camera.exposureCompensationEv),
+      {connection::CapturedImage{request.paths[0], extent.width, extent.height},
+       connection::CapturedImage{request.paths[1], extent.width, extent.height}}});
 }
 
 connection::MaterialDiagnosticResult RuntimeApplication::captureMaterialDiagnostic(

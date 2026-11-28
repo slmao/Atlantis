@@ -167,6 +167,49 @@ TEST_CASE("remote codec: material diagnostic pair guards target and output prove
   CHECK_FALSE(codec::decodeMaterialDiagnosticPair(codec::encode(mismatch), request));
 }
 
+TEST_CASE("directional shadow pair requires one correlated rendering basis", "[remote][codec][directional-shadow]") {
+  namespace c = atlantis::connection;
+  const c::ViewportCamera camera{{1,0,0,0,0,1,0,0,0,0,1,0,0,0,2,1}, 1.0f, 0.1f, 200.0f};
+  const c::DirectionalShadowDiagnosticRequest request{{entity(1), 7}, {entity(2).bytes}, 4, camera, {800,600},
+      {"D:/normal.png", "D:/unshadowed.png"}, c::ViewportStamp{4,2}};
+  const auto wire = overTheWire(codec::encode(request));
+  const auto decoded = codec::decodeDirectionalShadowDiagnosticRequest(wire);
+  REQUIRE(decoded);
+  CHECK(codec::encode(*decoded) == wire);
+  auto changed = wire;
+  changed.set("viewport", codec::encode(c::ViewportStamp{3,2}));
+  CHECK_FALSE(codec::decodeDirectionalShadowDiagnosticRequest(changed));
+  changed = wire;
+  changed.set("extent", json::parse(R"({"width":1920,"height":1081})").value());
+  CHECK_FALSE(codec::decodeDirectionalShadowDiagnosticRequest(changed));
+
+  c::FrameData frame;
+  frame.view = camera.worldMatrix;
+  frame.projection = camera.worldMatrix;
+  frame.directionalLights.push_back({{0,-1,0},{1,1,1},1.0f});
+  c::DirectionalShadowDiagnosticPair pair{request.document, request.apply, request.generation, entity(3), frame,
+      {{{request.paths[0],800,600},{request.paths[1],800,600}}}};
+  const auto reply = overTheWire(codec::encode(pair));
+  CHECK(codec::decodeDirectionalShadowDiagnosticPair(reply, request));
+  auto mismatch = pair;
+  mismatch.images[1].path = request.paths[0];
+  CHECK_FALSE(codec::decodeDirectionalShadowDiagnosticPair(codec::encode(mismatch), request));
+  mismatch = pair;
+  mismatch.frame.directionalLights.front().intensity = 0.0f;
+  CHECK_FALSE(codec::decodeDirectionalShadowDiagnosticPair(codec::encode(mismatch), request));
+  auto contradictory = reply;
+  auto captures = contradictory.find("captures")->asArray();
+  auto second = *captures[1].find("capture");
+  auto data = *second.find("data");
+  data.set("exposureCompensationEv", json::Value::number(1.0f));
+  second.set("data", std::move(data));
+  captures[1].set("capture", std::move(second));
+  auto array = json::Value::array();
+  for (auto& item : captures) array.push(std::move(item));
+  contradictory.set("captures", std::move(array));
+  CHECK_FALSE(codec::decodeDirectionalShadowDiagnosticPair(contradictory, request));
+}
+
 TEST_CASE("codec: every PropertyValue alternative round-trips", "[remote][codec]") {
   const std::vector<access::PropertyValue> values = {
       access::PropertyValue(std::uint64_t{0}),

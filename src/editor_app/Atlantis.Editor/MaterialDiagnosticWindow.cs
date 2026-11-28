@@ -90,13 +90,6 @@ public sealed partial class MainWindow
     private static Window BuildMaterialDiagnostic(LocatedMaterialBinding binding, ViewportObservation view,
         MaterialDiagnosticPair pair, Bitmap normal, Bitmap color)
     {
-        var normalView = new Image { Source = normal, Stretch = Stretch.Uniform, Height = 350 };
-        var colorView = new Image { Source = color, Stretch = Stretch.Uniform, Height = 350 };
-        var columns = EditorVisuals.Columns("*,*",
-            EditorVisuals.Stack(6, EditorVisuals.Heading("Normal shading"), normalView),
-            EditorVisuals.Stack(6, EditorVisuals.Heading("Base color · isolated surface"),
-                new Border { Background = Brushes.DimGray, Child = colorView }));
-        columns.ColumnSpacing = 12;
         var identity = EditorVisuals.Secondary($"{binding.Name} · {MaterialBindingPick.Slot} · {pair.Target.Material}");
         identity.TextWrapping = TextWrapping.Wrap;
         var texture = EditorVisuals.Secondary($"Node {pair.Target.Entity} · Texture {pair.Texture}");
@@ -107,19 +100,33 @@ public sealed partial class MainWindow
             $"Normal shading uses scene lights and camera effects, exposure {pair.Normal.Data.ExposureCompensationEv?.ToString("G") ?? "unknown"} EV. " +
             "Base color omits lighting and camera effects. Other objects do not occlude it.");
         treatment.TextWrapping = TextWrapping.Wrap;
-        var summary = EditorVisuals.Stack(6, identity, texture, conditions, treatment, columns);
+        var summary = EditorVisuals.Stack(6, identity, texture, conditions, treatment);
+        return BuildDiagnosticComparison("Material Diagnostic", "Base color · isolated surface", summary, normal, color);
+    }
+
+    private static Window BuildDiagnosticComparison(string title, string controlLabel, StackPanel summary,
+        Bitmap normal, Bitmap control)
+    {
+        var normalView = new Image { Source = normal, Stretch = Stretch.Uniform, Height = 350 };
+        var controlView = new Image { Source = control, Stretch = Stretch.Uniform, Height = 350 };
+        var columns = EditorVisuals.Columns("*,*",
+            EditorVisuals.Stack(6, EditorVisuals.Heading("Normal shading"), normalView),
+            EditorVisuals.Stack(6, EditorVisuals.Heading(controlLabel),
+                new Border { Background = Brushes.DimGray, Child = controlView }));
+        columns.ColumnSpacing = 12;
+        summary.Children.Add(columns);
         summary.Margin = new Thickness(14);
         var window = new Window
         {
-            Title = "Material Diagnostic", Width = 1100, Height = 540, MinWidth = 650,
+            Title = title, Width = 1100, Height = 540, MinWidth = 650,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             Content = new ScrollViewer { Content = summary }
         };
         window.Closed += (_, _) =>
         {
-            normalView.Source = colorView.Source = null;
+            normalView.Source = controlView.Source = null;
             normal.Dispose();
-            color.Dispose();
+            control.Dispose();
         };
         return window;
     }

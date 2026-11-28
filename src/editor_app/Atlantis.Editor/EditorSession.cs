@@ -1679,6 +1679,67 @@ public sealed class EditorWorker : IDisposable
         return BistroProjection.Confirm(document, camera, apply.Value, policy.Stamp);
     }
 
+    internal void CaptureDirectionalShadowDiagnostic(DocumentToken document, long intent, ulong generation,
+        ViewportObservation view, string normalPath, string unshadowedPath,
+        Action<DirectionalShadowDiagnosticPair?, string> completed)
+    {
+        long lifetime = MeshDocumentLifetime;
+        ulong extent;
+        lock (_lock) extent = _viewportExtentRevision;
+        Enqueue(session =>
+        {
+            bool Current() => !_stopping && !_navigationUncertain && lifetime == MeshDocumentLifetime &&
+                intent == _cameraIntent && extent == _viewportExtentRevision && NavigationGeneration == generation &&
+                _viewportExtent == ((int)view.Extent.Width, (int)view.Extent.Height) && _pendingCamera is null &&
+                _pendingCameraMotion.Count == 0 && !_dragActive && !_gizmoActive && _requestedGroup is null &&
+                _alignment is null && _placementOverlay is null;
+            const string stale = "The view or projection changed. Return to the bookmark after settling Apply.";
+            void Post(DirectionalShadowDiagnosticPair? pair, string message) => _post(() =>
+            {
+                bool current;
+                lock (_lock) current = Current();
+                completed(current ? pair : null, current || pair is null ? message : stale);
+            });
+
+            try
+            {
+                lock (_lock)
+                    if (!Current()) { Post(null, stale); return; }
+                var status = session.Control.Status();
+                if (!status.SupportsDirectionalShadowDiagnosticCapture)
+                {
+                    Post(null, "Update the Runtime to compare directional shadows.");
+                    return;
+                }
+                if (status.Paused || status.SceneGeneration != generation ||
+                    ReadBistroProjection(session, document, generation) is not { } basis)
+                { Post(null, stale); return; }
+
+                var pose = view.Pose();
+                var request = new DirectionalShadowDiagnosticRequest(document, basis.Apply, generation,
+                    new(pose.WorldMatrix, pose.Lens.FovYRadians, pose.Lens.NearZ, pose.Lens.FarZ),
+                    view.Extent, normalPath, unshadowedPath, basis.Viewport);
+                lock (_lock)
+                    if (!Current()) { Post(null, stale); return; }
+                var result = session.Control.CaptureDirectionalShadowDiagnostic(request);
+                if (result.Pair is not { } pair)
+                {
+                    string reason = result.Error == RenderLookCaptureError.Unavailable
+                        ? "Directional shadow comparison requires a contributing directional light and complete render inputs."
+                        : "Directional shadow comparison refused: " + result.Error;
+                    Post(null, reason);
+                    return;
+                }
+                if (pair.ActiveCamera != basis.Camera || ReadBistroProjection(session, document, generation) != basis ||
+                    !view.Matches(pair.Normal.Data.View, pair.Normal.Data.Projection) ||
+                    !view.Matches(pair.WithoutDirectionalShadows.Data.View, pair.WithoutDirectionalShadows.Data.Projection))
+                { Post(null, stale); return; }
+                Post(pair, "Directional shadow comparison captured.");
+            }
+            catch (Exception error) when (error is GameplayException or IOException) { Post(null, error.Message); }
+        });
+    }
+
     internal void ObserveBookmarkView(DocumentToken document, long intent, RenderLookExtent size,
         ViewportObservation? expected, string? path, Action<BookmarkFrame?, string?> completion,
         ulong? settledGeneration = null)
