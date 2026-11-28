@@ -288,8 +288,8 @@ TEST_CASE("parseSceneSource rejects the superseded version 2 outright, with no d
 }
 
 TEST_CASE("parseSceneSource rejects an unrecognized future version line", "[asset_system][scene]") {
-  // Spec 0133 admits source 10. The next unrecognized version still fails closed.
-  const auto result = parseSceneSource("atlantis_scene_source_version: 11\n");
+  // Spec 0150 admits source 11. The next unrecognized version still fails closed.
+  const auto result = parseSceneSource("atlantis_scene_source_version: 12\n");
   REQUIRE(result.isErr());
   CHECK(result.error() == SceneSourceParseError::UnknownSourceVersion);
 }

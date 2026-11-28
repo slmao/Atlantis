@@ -140,7 +140,6 @@ enum class SceneCookError {
 // cross-check granularity into one enum, because decodeScene() is a
 // single function playing both roles at once.
 enum class SceneArtifactDecodeError {
-  InvalidEnvironmentGuid,
   ArtifactUnreadable,
   MetadataUnreadable,
   TooSmallForHeader,
@@ -178,6 +177,7 @@ enum class SceneArtifactDecodeError {
   // contracts, checked after the preceding artifact validations.
   ConflictingComponents,
   ZeroAssetReference,
+  InvalidEnvironmentGuid,
 };
 
 // Plan 0016 Section D8: cookTexture()'s own validation conditions --
