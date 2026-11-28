@@ -42,8 +42,8 @@ internal static partial class Program
 
     private static void CompositionChecks(string repo)
     {
-        Check(ToolRegistry.AllMappings.Length == 99 && ToolRegistry.AllMappings.Select(m => m.Tool.Name).Distinct().Count() == 99,
-            "99 unique approved tools including render look capture");
+        Check(ToolRegistry.AllMappings.Length == 100 && ToolRegistry.AllMappings.Select(m => m.Tool.Name).Distinct().Count() == 100,
+            "100 unique approved tools including directional shadow capture");
         FakeSession oldCapture = new() { Response =
             $$$"""{"result":{"paused":false,"frame":5,"scene":"{{{Entity}}}","sceneGeneration":1}}""" };
         JsonValue values = JsonValue.NewArray();
