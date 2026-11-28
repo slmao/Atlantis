@@ -347,14 +347,10 @@ constexpr std::uint32_t kOcclusionMaterialSourceSchema = 12;
   return true;
 }
 
-// The mesh and material GUIDs a scene source references.
-[[nodiscard]] std::optional<std::vector<AssetGuid>> sceneDependencies(const std::string& sourcePath) {
-  const auto text = readTextFile(sourcePath);
-  if (!text) return std::nullopt;
-  const auto parsed = parseSceneSource(*text);
-  if (parsed.isErr()) return std::nullopt;
+[[nodiscard]] std::vector<AssetGuid> sceneDependencies(const ParsedSceneSource& scene) {
   std::vector<AssetGuid> dependencies;
-  for (const ParsedSceneNode& node : parsed.value().nodes) {
+  if (scene.environment) dependencies.push_back(*scene.environment);
+  for (const ParsedSceneNode& node : scene.nodes) {
     if (node.meshAsset) dependencies.push_back(*node.meshAsset);
     if (node.materialAsset) dependencies.push_back(*node.materialAsset);
   }
@@ -464,18 +460,38 @@ constexpr std::uint32_t kOcclusionMaterialSourceSchema = 12;
 
   const auto guid = resolveCookGuid(request, atlantis::asset_system::CatalogAssetType::Scene);
   if (!guid) return 1;
-  const auto result = cookScene(request.sourcePath, *guid, artifactPath.string(), metadataPath.string());
-  if (result.isErr()) {
-    std::cerr << "atlantis_asset_cooker: cook failed: " << sceneCookErrorMessage(result.error()) << "\n";
+  const auto text = readTextFile(request.sourcePath);
+  if (!text) {
+    std::cerr << "atlantis_asset_cooker: cannot read scene source: " << request.sourcePath << "\n";
     return 1;
   }
-  auto dependencies = sceneDependencies(request.sourcePath);
-  if (!dependencies) {
-    std::cerr << "atlantis_asset_cooker: cannot re-read the cooked scene source: " << request.sourcePath << "\n";
+  const auto cooked = cookSceneSource(*text, *guid);
+  if (cooked.isErr()) {
+    std::cerr << "atlantis_asset_cooker: cook failed: " << sceneCookErrorMessage(cooked.error()) << "\n";
+    return 1;
+  }
+  const auto parsed = parseSceneSource(*text);
+  if (parsed.isErr()) return 1;
+  const auto environment = parsed.value().environment;
+  if (environment) {
+    const auto catalogText = readTextFile(request.catalogSourcePath);
+    const auto catalog = catalogText ? std::optional{parseAssetCatalogSource(*catalogText)} : std::nullopt;
+    const auto* record = catalog && catalog->isOk() ? catalog->value().find(*environment) : nullptr;
+    if (!record || record->type != CatalogAssetType::Environment) {
+      std::cerr << "atlantis_asset_cooker: scene environment " << toString(*environment)
+                << " is not an Environment in the catalog source\n";
+      return 1;
+    }
+  }
+  const auto written = writeCookedScene(cooked.value(), artifactPath.string(), metadataPath.string());
+  if (written.isErr()) {
+    std::cerr << "atlantis_asset_cooker: cook failed: " << sceneCookErrorMessage(written.error()) << "\n";
     return 1;
   }
   if (!writeCookFragment(request, CatalogAssetType::Scene, *guid, artifactPath, metadataPath,
-                         kSceneArtifactSchemaVersion, kSceneSourceSchema, std::move(*dependencies))) {
+                         environment ? kSceneEnvironmentArtifactSchemaVersion : kSceneArtifactSchemaVersion,
+                         environment ? kSceneEnvironmentSourceVersion : kSceneSourceSchema,
+                         sceneDependencies(parsed.value()))) {
     return 1;
   }
 

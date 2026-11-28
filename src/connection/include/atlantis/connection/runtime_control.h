@@ -24,6 +24,12 @@
 // transport (Atlantis Remote) carries it. No Runtime type appears here.
 namespace atlantis::connection {
 
+struct EffectiveSceneEnvironment {
+  bool enabled = false;
+  std::optional<asset_system::AssetGuid> asset;  // enabled with no catalog identity is a startup resource
+  friend bool operator==(const EffectiveSceneEnvironment&, const EffectiveSceneEnvironment&) = default;
+};
+
 struct RuntimeStatus {
   bool paused = false;
   std::uint64_t frame = 0;  // frames run since the control began
@@ -35,6 +41,7 @@ struct RuntimeStatus {
   bool supportsRenderLookCaptureExtent = false;
   bool supportsMaterialDiagnosticCapture = false;
   bool supportsDirectionalShadowDiagnosticCapture = false;
+  std::optional<EffectiveSceneEnvironment> sceneEnvironment{};  // presence advertises support
   friend bool operator==(const RuntimeStatus&, const RuntimeStatus&) = default;
 };
 

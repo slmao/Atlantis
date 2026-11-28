@@ -140,6 +140,7 @@ enum class SceneCookError {
 // cross-check granularity into one enum, because decodeScene() is a
 // single function playing both roles at once.
 enum class SceneArtifactDecodeError {
+  InvalidEnvironmentGuid,
   ArtifactUnreadable,
   MetadataUnreadable,
   TooSmallForHeader,

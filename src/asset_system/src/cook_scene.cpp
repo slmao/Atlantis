@@ -248,11 +248,11 @@ namespace fs = std::filesystem;
 
   // Step 10: encode (cookScene() then writes both atomically).
   CookedScene cooked;
-  cooked.artifactBytes = encodeSceneArtifact(nodes, parents, activeCameraIndex, entityGuids);
+  cooked.artifactBytes = encodeSceneArtifact(nodes, parents, activeCameraIndex, entityGuids, parsed.environment);
 
   SceneMetadata metadata;
   metadata.assetGuid = assetGuid;
-  metadata.schemaVersion = kSceneArtifactSchemaVersion;
+  metadata.schemaVersion = parsed.environment ? kSceneEnvironmentArtifactSchemaVersion : kSceneArtifactSchemaVersion;
   metadata.nodeCount = static_cast<std::uint32_t>(nodes.size());
   cooked.metadataText = serializeSceneMetadata(metadata);
 
@@ -334,13 +334,18 @@ atlantis::Result<std::monostate, SceneCookError> cookScene(const std::string& so
   const auto cooked = cookSceneSource(sourceText, assetGuid);
   if (cooked.isErr()) return ResultT::Err(cooked.error());
 
-  // Atomic writes.
-  const std::vector<std::byte>& artifactBytes = cooked.value().artifactBytes;
+  return writeCookedScene(cooked.value(), artifactOutputPath, metadataOutputPath);
+}
+
+atlantis::Result<std::monostate, SceneCookError> writeCookedScene(
+    const CookedScene& cooked, const std::string& artifactOutputPath, const std::string& metadataOutputPath) {
+  using ResultT = atlantis::Result<std::monostate, SceneCookError>;
+  const std::vector<std::byte>& artifactBytes = cooked.artifactBytes;
   if (!writeBytesAtomically(artifactOutputPath, reinterpret_cast<const char*>(artifactBytes.data()),
                              artifactBytes.size())) {
     return ResultT::Err(SceneCookError::ArtifactWriteFailed);
   }
-  if (!writeTextAtomically(metadataOutputPath, cooked.value().metadataText)) {
+  if (!writeTextAtomically(metadataOutputPath, cooked.metadataText)) {
     return ResultT::Err(SceneCookError::MetadataWriteFailed);
   }
 

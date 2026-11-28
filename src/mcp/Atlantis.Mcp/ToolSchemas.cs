@@ -52,6 +52,8 @@ internal static class ToolSchemas
         Command("RequireNameBatchDocument", ("expectedDocument", Object(("documentId", String), ("documentRevision", Integer)))),
         RenderLookGuard,
         Command("SetActiveCamera", ("camera", Nullable(String))),
+        Command("SetSceneEnvironment", ("expectedDocument", Object(("documentId", String), ("documentRevision", Integer))),
+            ("environment", Nullable(String))),
         Command("SetNodeName", ("node", String), ("name", String)),
         Command("SetPrefabOrigin", ("node", String), ("prefab", String)));
 
@@ -134,6 +136,13 @@ internal static class ToolSchemas
     {
         JsonObject shape = Object(("node", String), ("expected", PrefabDocument), ("revision", String), ("prefab", String));
         shape["required"] = new JsonArray("node", "expected", "revision");
+        return JsonSerializer.SerializeToElement(shape);
+    }
+
+    internal static JsonElement DocumentStateParameters()
+    {
+        JsonObject shape = Object(("withEnvironment", new JsonObject { ["const"] = true }));
+        shape["required"] = new JsonArray();
         return JsonSerializer.SerializeToElement(shape);
     }
 

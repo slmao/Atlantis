@@ -1,6 +1,9 @@
 #pragma once
 
 #include <atlantis/asset_system/environment_types.h>
+#include <atlantis/asset_system/asset_guid.h>
+
+#include <optional>
 #include <atlantis/asset_system/errors.h>
 #include <atlantis/result.h>
 
@@ -16,6 +19,7 @@ namespace atlantis::asset_system {
 
 // Loads the fixed-size studio bake for a synchronous preview.
 [[nodiscard]] atlantis::Result<EnvironmentAssetData, EnvironmentLoadError> loadPreviewStudioEnvironment(
-    const std::filesystem::path& artifactPath, const std::filesystem::path& metadataPath);
+    const std::filesystem::path& artifactPath, const std::filesystem::path& metadataPath,
+    std::optional<AssetGuid> expectedGuid = {});
 
 }  // namespace atlantis::asset_system

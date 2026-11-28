@@ -10,6 +10,7 @@
 #include <atlantis/asset_system/material_artifact.h>
 #include <atlantis/asset_system/mesh_artifact.h>
 #include <atlantis/asset_system/scene_artifact.h>
+#include <atlantis/asset_system/environment_artifact.h>
 #include <atlantis/asset_system/texture_artifact.h>
 #include <atlantis/log.h>
 #include <atlantis/renderer/mesh.h>
@@ -48,8 +49,10 @@ using atlantis::asset_system::CatalogAssetType;
              schema == atlantis::asset_system::kOcclusionMaterialArtifactSchemaVersion ||
              schema == atlantis::asset_system::kCombinedMaterialArtifactSchemaVersion;
     case CatalogAssetType::Scene:
-      return schema == atlantis::asset_system::kSceneArtifactSchemaVersion;
+      return schema == atlantis::asset_system::kSceneArtifactSchemaVersion ||
+             schema == atlantis::asset_system::kSceneEnvironmentArtifactSchemaVersion;
     case CatalogAssetType::Environment:
+      return schema == atlantis::asset_system::kEnvironmentArtifactSchemaVersion;
     case CatalogAssetType::GltfImport:
       return false;
   }
@@ -405,23 +408,12 @@ struct LoadedDependencies {
   return ResultT::Ok(std::move(out));
 }
 
-[[nodiscard]] atlantis::Result<LoadedScene, RuntimeInitError> loadSceneAndDependencies(
-    const BootstrapConfig& config, atlantis::rhi::Device* device,
-    const atlantis::rhi::VertexInputLayout& vertexInputLayout) {
-  using ResultT = atlantis::Result<LoadedScene, RuntimeInitError>;
+}  // namespace
 
-  // (a) Load and validate the asset catalog -- local, immutable resolver
-  // (Plan 0047 P14, ADR-0098 D3).
-  auto catalogResult = atlantis::asset_system::loadAssetCatalog(config.assetCatalogPath);
-  if (catalogResult.isErr()) {
-    ATLANTIS_LOG_ERROR("loadAssetCatalog() failed: {}", toString(catalogResult.error()));
-    return ResultT::Err(RuntimeInitError::AssetCatalogLoadFailed);
-  }
-  const AssetCatalog catalog = std::move(catalogResult.value());
-
-  // (b) Resolve the configured scene, then decode its artifact -- fully
-  // validated ValidatedSceneData.
-  const AssetCatalogRecord* sceneRecord = catalog.find(config.sceneAsset);
+Result<asset_system::ValidatedSceneData, RuntimeInitError> decodeCatalogScene(
+    const asset_system::AssetCatalog& catalog, const asset_system::AssetGuid& sceneGuid) {
+  using ResultT = Result<asset_system::ValidatedSceneData, RuntimeInitError>;
+  const AssetCatalogRecord* sceneRecord = catalog.find(sceneGuid);
   if (sceneRecord == nullptr || sceneRecord->type != CatalogAssetType::Scene) {
     ATLANTIS_LOG_ERROR("the configured scene GUID is not a scene record in the catalog");
     return ResultT::Err(RuntimeInitError::SceneNotInCatalog);
@@ -435,10 +427,53 @@ struct LoadedDependencies {
     ATLANTIS_LOG_ERROR("decodeScene() failed");
     return ResultT::Err(RuntimeInitError::SceneArtifactLoadFailed);
   }
-  atlantis::asset_system::ValidatedSceneData scene = std::move(sceneResult.value());
+  const auto environment = sceneResult.value().environment();
+  const auto expectedSchema = environment ? asset_system::kSceneEnvironmentArtifactSchemaVersion
+                                          : asset_system::kSceneArtifactSchemaVersion;
+  if (sceneRecord->artifactSchema != expectedSchema)
+    return ResultT::Err(RuntimeInitError::UnsupportedArtifactSchema);
+  std::size_t environmentEdges = 0;
+  for (const auto& dependency : sceneRecord->dependencies) {
+    const auto* record = catalog.find(dependency);
+    if (!record || record->type != CatalogAssetType::Environment) continue;
+    if (!environment || dependency != *environment) {
+      ATLANTIS_LOG_ERROR("scene has an unexpected environment dependency {}", asset_system::toString(dependency));
+      return ResultT::Err(RuntimeInitError::EnvironmentLoadFailed);
+    }
+    ++environmentEdges;
+  }
+  if (environment && environmentEdges != 1) {
+    ATLANTIS_LOG_ERROR("scene environment {} is missing its cooked catalog dependency", asset_system::toString(*environment));
+    return ResultT::Err(RuntimeInitError::EnvironmentLoadFailed);
+  }
+  return ResultT::Ok(std::move(sceneResult.value()));
+}
+
+namespace {
+[[nodiscard]] Result<LoadedScene, RuntimeInitError> loadSceneAndDependencies(
+    const BootstrapConfig& config, atlantis::rhi::Device* device,
+    const atlantis::rhi::VertexInputLayout& vertexInputLayout,
+    const AssetCatalog* catalog, std::optional<asset_system::ValidatedSceneData> decoded) {
+  using ResultT = Result<LoadedScene, RuntimeInitError>;
+  std::optional<AssetCatalog> localCatalog;
+  if (!catalog) {
+    auto loaded = asset_system::loadAssetCatalog(config.assetCatalogPath);
+    if (loaded.isErr()) {
+      ATLANTIS_LOG_ERROR("loadAssetCatalog() failed: {}", toString(loaded.error()));
+      return ResultT::Err(RuntimeInitError::AssetCatalogLoadFailed);
+    }
+    localCatalog.emplace(std::move(loaded.value()));
+    catalog = &*localCatalog;
+  }
+  if (!decoded) {
+    auto loaded = decodeCatalogScene(*catalog, config.sceneAsset);
+    if (loaded.isErr()) return ResultT::Err(loaded.error());
+    decoded.emplace(std::move(loaded.value()));
+  }
+  auto& scene = *decoded;
 
   // (c)-(e), with nothing loaded yet.
-  auto dependencies = loadDependencies(catalog, scene, nullptr, device, vertexInputLayout, config.retainPickGeometry);
+  auto dependencies = loadDependencies(*catalog, scene, nullptr, device, vertexInputLayout, config.retainPickGeometry);
   if (dependencies.isErr()) return ResultT::Err(dependencies.error());
   LoadedDependencies& parts = dependencies.value();
   return ResultT::Ok(LoadedScene{std::move(scene), std::move(parts.meshResourceMap), std::move(parts.materialDataMap),
@@ -449,9 +484,10 @@ struct LoadedDependencies {
 
 atlantis::Result<SceneLoadOutcome, RuntimeInitError> loadAndBakeScene(
     const BootstrapConfig& config, atlantis::rhi::Device* device,
-    const atlantis::rhi::VertexInputLayout& vertexInputLayout) {
+    const atlantis::rhi::VertexInputLayout& vertexInputLayout, const AssetCatalog* catalog,
+    std::optional<asset_system::ValidatedSceneData> decoded) {
   using ResultT = atlantis::Result<SceneLoadOutcome, RuntimeInitError>;
-  auto loaded = loadSceneAndDependencies(config, device, vertexInputLayout);
+  auto loaded = loadSceneAndDependencies(config, device, vertexInputLayout, catalog, std::move(decoded));
   if (loaded.isErr()) return ResultT::Err(loaded.error());
   LoadedScene& parts = loaded.value();
 

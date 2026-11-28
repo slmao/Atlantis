@@ -83,15 +83,24 @@ public sealed class AuthoringSession
     public A.SaveError? Save() => Unit("authoring.save", Codec.DecodeSaveError);
 
     /// <summary>Reads persistence independently of the Runtime's Apply projection.</summary>
-    public Outcome<A.DocumentState?, A.DocumentError> DocumentState()
+    public Outcome<A.DocumentState?, A.DocumentError> DocumentState() => ReadDocumentState(false);
+
+    /// <summary>Opts in to the environment field on a supporting Runtime.</summary>
+    public Outcome<A.DocumentState?, A.DocumentError> DocumentStateWithEnvironment() => ReadDocumentState(true);
+
+    private Outcome<A.DocumentState?, A.DocumentError> ReadDocumentState(bool withEnvironment)
     {
         const string method = "authoring.documentState";
-        var reply = _session.AwaitResponse(_session.Send(method, JsonValue.NewObject()));
+        var parameters = JsonValue.NewObject();
+        if (withEnvironment) parameters.Set("withEnvironment", JsonValue.Bool(true));
+        var reply = _session.AwaitResponse(_session.Send(method, parameters));
         if (Codec.DocumentRpcRefusal(reply, method) is { } refusal)
             return Outcome<A.DocumentState?, A.DocumentError>.Err(refusal);
         if (Codec.DocumentResult(reply)?.Find("ok") is not { } ok) throw _session.Malformed(method);
-        return Outcome<A.DocumentState?, A.DocumentError>.Ok(ok.IsNull ? null :
-            Codec.DecodeDocumentState(ok) ?? throw _session.Malformed(method));
+        if (ok.IsNull) return Outcome<A.DocumentState?, A.DocumentError>.Ok(null);
+        if (Codec.DecodeDocumentState(ok) is not { } state || state.Environment.HasValue != withEnvironment)
+            throw _session.Malformed(method);
+        return Outcome<A.DocumentState?, A.DocumentError>.Ok(state);
     }
 
     /// <summary>Atomically saves the reviewed revision. A lost reply has an unknown outcome.</summary>
@@ -403,7 +412,8 @@ public sealed class AuthoringSession
     public CommandTicket Submit(A.Command command)
     {
         if (command is A.SwapAdjacentSiblings or A.MoveSiblingRelative or A.RequireDocumentRevision or A.RequireTransformBatchRevision
-            or A.RequireDuplicateBatchRevision or A.RequireNameBatchDocument or A.RequireRenderLookDocument or A.SetPrefabOrigin)
+            or A.RequireDuplicateBatchRevision or A.RequireNameBatchDocument or A.RequireRenderLookDocument or A.SetPrefabOrigin
+            or A.SetSceneEnvironment)
             return SubmitTransaction(new[] { command }).First;
         JsonValue result = _session.Call("authoring.submit", JsonValue.NewObject().Set("command", Codec.Encode(command)));
         return Codec.DecodeUInt64(result) is ulong ticket ? new CommandTicket(ticket) : throw _session.Malformed("authoring.submit");
@@ -418,6 +428,12 @@ public sealed class AuthoringSession
         bool prefab = commands.Any(command => command is A.SetPrefabOrigin);
         bool names = commands.Any(command => command is A.RequireNameBatchDocument);
         bool looks = commands.Any(command => command is A.RequireRenderLookDocument);
+        A.SetSceneEnvironment? environment = commands.OfType<A.SetSceneEnvironment>().FirstOrDefault();
+        if (environment is not null && (commands.Count != 1 || environment.ExpectedDocument.DocumentId.IsNil ||
+            environment.ExpectedDocument.DocumentRevision == 0 || environment.Choice.Asset is { IsNil: true }))
+            throw new ArgumentException("SetSceneEnvironment requires a valid token and must be submitted alone.", nameof(commands));
+        if (environment is not null && _session.Control.Status().SceneEnvironment is null)
+            throw new NotSupportedException("This Runtime does not support scene environment editing.");
         if (property || transform || duplicate || prefab || names || looks)
         {
             A.DocumentInfo? info = Document();
@@ -440,8 +456,17 @@ public sealed class AuthoringSession
             RequireSiblingOrderIfNeeded(command);
             list.Push(Codec.Encode(command));
         }
-        JsonValue result = _session.Call("authoring.submitTransaction", JsonValue.NewObject().Set("commands", list));
-        return Codec.DecodeTransactionTicket(result) ?? throw _session.Malformed("authoring.submitTransaction");
+        _session.ThrowIfFailed();
+        try
+        {
+            JsonValue result = _session.Call("authoring.submitTransaction", JsonValue.NewObject().Set("commands", list));
+            return Codec.DecodeTransactionTicket(result) ?? throw _session.Malformed("authoring.submitTransaction");
+        }
+        catch (RemoteException error) when (environment is not null)
+        {
+            throw new RemoteException(error, $"Scene environment outcome unknown for {environment.Choice.Asset?.ToString() ?? "Inherit"}. " +
+                "Check the original Runtime's document and Apply status before retrying.");
+        }
     }
 
     /// <summary>Refusals of this session's submissions since the last drain.</summary>

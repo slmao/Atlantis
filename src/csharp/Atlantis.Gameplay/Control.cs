@@ -6,12 +6,15 @@ using System.Numerics;
 namespace Atlantis.Gameplay;
 
 // Plan 0065 P4 (ADR-0131 D5): SceneGeneration counts the Runtime's scene reloads (0: none).
+public sealed record EffectiveSceneEnvironment(bool Enabled, AssetGuid? Asset);
+
 public sealed record RuntimeStatus(bool Paused, ulong Frame, AssetGuid Scene, ulong SceneGeneration = 0)
 {
     public bool SupportsRenderLookCapture { get; init; }
     public bool SupportsRenderLookCaptureExtent { get; init; }
     public bool SupportsDirectionalShadowDiagnosticCapture { get; init; }
     public bool SupportsMaterialDiagnosticCapture { get; init; }
+    public EffectiveSceneEnvironment? SceneEnvironment { get; init; }
 }
 
 /// <summary>

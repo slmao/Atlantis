@@ -99,6 +99,7 @@ using PrefabRead = std::function<std::optional<PrefabDefinition>(const asset_sys
 using PrefabDigest = std::function<std::optional<std::string>(std::string_view)>;
 using PrefabAssets = std::function<bool(const asset_system::scene::Renderable&)>;
 using PrefabLookup = std::function<bool(const asset_system::AssetGuid&)>;
+using SceneEnvironmentLookup = std::function<bool(const asset_system::AssetGuid&)>;
 
 
 // Spec 0122: the executable supplies its recovery store. All callbacks run
@@ -166,6 +167,7 @@ class AuthoringSession {
   void setPrefabSync(PrefabRead read, PrefabDigest digest, PrefabAssets assets);
   void setPrefabUpdateSink(PrefabUpdateSink sink);
   void setPrefabLookup(PrefabLookup lookup);
+  void setSceneEnvironmentLookup(SceneEnvironmentLookup lookup);
   void setRecoveryStore(RecoveryStore& store);
 
   // The host reports that the Runtime swapped in an applied document (Plan
@@ -174,7 +176,8 @@ class AuthoringSession {
   // One terminal report for this accepted identity. Stale/duplicate ids are ignored.
   // An Applied record/projection is updated before publishing its legacy event.
   void reportReload(connection::authoring::ApplyId id,
-                    Result<std::uint64_t, connection::authoring::ReloadError> result);
+                    Result<std::uint64_t, connection::authoring::ReloadError> result,
+                    std::optional<connection::authoring::SceneEnvironmentApplyDetail> environmentDetail = {});
 
   struct State;  // private to authoring_session.cpp
 

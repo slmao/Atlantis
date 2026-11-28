@@ -1,9 +1,9 @@
 # ADR 0196: Scene-owned environment choice and Runtime activation
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-28
 - **Deciders:** Maintainer
-- **Acceptance:** Pending joint review.
+- **Acceptance:** [Maintainer approval](https://github.com/slmao/Atlantis/pull/463#issuecomment-7236980882), 2026-11-28.
 - **Related Spec:** [Spec 0150](../specs/0150-scene-environment.md)
 
 ## Context

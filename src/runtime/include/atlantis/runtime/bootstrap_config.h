@@ -1,5 +1,7 @@
 #pragma once
 
+#include <memory>
+
 #include <atlantis/asset_system/asset_guid.h>
 #include <atlantis/result.h>
 #include <atlantis/runtime/init_error.h>
@@ -8,6 +10,8 @@
 #include <optional>
 #include <string>
 #include <variant>
+
+namespace atlantis::asset_system { class AssetCatalog; }
 
 namespace atlantis::runtime {
 
@@ -32,6 +36,7 @@ struct BootstrapConfig {
   // dependency through the catalog; sourced from CMake compile definitions
   // (P15) on Windows and from the packaged closure catalog on Android.
   std::string assetCatalogPath;
+  std::shared_ptr<const asset_system::AssetCatalog> assetCatalogSnapshot{};
   atlantis::asset_system::AssetGuid sceneAsset;
   // Plan 0018 Section P10: the second, MaterialKind::UnlitTextured
   // built-in shader pair -- mirrors vertexShaderSpirvPath/

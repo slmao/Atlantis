@@ -552,6 +552,7 @@ public sealed partial class MainWindow : Window
         InitializeBistroViews();
         InitializeBookmarks();
         InitializeRenderLooks();
+        InitializeSceneEnvironment();
         _locateSurfaceMaterial.Click += (_, _) =>
         {
             if (BistroLocatorProtected())

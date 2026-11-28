@@ -88,6 +88,7 @@ constexpr std::string_view kUsage =
     "  scene create-prefab <name> <node-guid> <document-guid> <revision>\n"
     "  scene document-state | scene save-if-current <document-id> <revision>\n"
     "  scene reopen-if-current <document-id> <revision> | scene reopen-if-current --if-absent\n"
+    "  scene environment [<inherit|asset-guid> <document-id> <revision>]\n"
     "  scene recovery-status [copy-id]\n"
     "  scene restore-recovery|discard-recovery <copy-id> <document-id> <revision>\n"
     "                    while the Runtime is paused, scene apply is pending until the next step\n"

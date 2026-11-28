@@ -1,12 +1,12 @@
 # Spec 0150 — Scene Environment Lighting and Reflections V1
 
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
 - **Created:** 2026-11-28
 - **Design baseline:** `79c061a3` on `main`, maintainer merge of [PR #462](https://github.com/slmao/Atlantis/pull/462)
 - **Related Plan:** [Plan 0150](../plans/0150-scene-environment.md)
-- **Related ADR:** [ADR-0196](../adr/0196-scene-environment-selection-and-activation.md) (Proposed)
-- **Approval:** Pending joint review.
+- **Related ADR:** [ADR-0196](../adr/0196-scene-environment-selection-and-activation.md) (Accepted)
+- **Approval:** [Maintainer approval of `36e87142`](https://github.com/slmao/Atlantis/pull/463#issuecomment-7236980882).
 
 ## Summary and motivation
 

@@ -72,6 +72,11 @@ std::unique_ptr<atlantis::connection::AuthoringConnection> AuthoringHost::connec
       recovery_ = std::make_unique<SceneRecoveryStore>(hand->sourcePath, session_->source().scene);
       session_->setRecoveryStore(*recovery_);
     }
+    if (sources_.assets) {
+      session_->setSceneEnvironmentLookup([this](const as::AssetGuid& environment) {
+        return application_.hasSceneEnvironment(environment);
+      });
+    }
     session_->setSceneSink([this](connection::authoring::ApplyId id, as::ValidatedSceneData scene) {
       return application_.requestSceneReload(id, std::move(scene));
     });
@@ -135,7 +140,7 @@ std::unique_ptr<atlantis::connection::AuthoringConnection> AuthoringHost::connec
 void AuthoringHost::afterFrame() {
   if (recovery_) recovery_->settle();
   if (auto result = application_.takeSceneReloadResult(); result && session_)
-    session_->reportReload(result->first, std::move(result->second));
+    session_->reportReload(result->first, std::move(result->second), result->environmentDetail);
 }
 
 }  // namespace atlantis::runtime

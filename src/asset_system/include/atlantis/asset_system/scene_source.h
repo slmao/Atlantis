@@ -49,6 +49,7 @@ struct ParsedSceneNode {
 struct ParsedSceneSource {
   std::vector<ParsedSceneNode> nodes;               // declaration order
   std::optional<std::uint32_t> activeCameraNodeId;  // std::nullopt for "active_camera: none"
+  std::optional<AssetGuid> environment{};  // source v11; absent inherits startup
 };
 
 // Plan 0015 Section D3: parse/decode-error conditions specific to the
@@ -96,6 +97,8 @@ enum class SceneSourceParseError {
 // scene_semantic_schema.h. A semantic bump fails the conformance build until
 // this declaration (and the format, per ADR-0045) follows.
 inline constexpr std::uint32_t kSceneSourceSemanticVersion = 2;
+inline constexpr std::uint32_t kSceneEnvironmentSemanticVersion = 3;
+inline constexpr std::uint32_t kSceneEnvironmentSourceVersion = 11;
 
 // Serializes back to the exact grammar parseSceneSource() accepts. Lossless
 // since Plan 0065 P1 (Spec 0065 Correction 2026-10-22; fixes Plan 0049 F5):

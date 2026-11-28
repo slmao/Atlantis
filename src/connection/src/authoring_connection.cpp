@@ -74,6 +74,9 @@ std::string_view toString(Error error) noexcept {
     case Error::DuplicateBatchStaleRevision: return "DuplicateBatchStaleRevision";
     case Error::InvalidGuardedNameBatch: return "InvalidGuardedNameBatch";
     case Error::NameBatchStaleDocument: return "NameBatchStaleDocument";
+    case Error::InvalidSceneEnvironment: return "InvalidSceneEnvironment";
+    case Error::SceneEnvironmentStaleDocument: return "SceneEnvironmentStaleDocument";
+    case Error::SceneEnvironmentUnavailable: return "SceneEnvironmentUnavailable";
     case Error::InvalidGuardedRenderLook: return "InvalidGuardedRenderLook";
     case Error::RenderLookStaleDocument: return "RenderLookStaleDocument";
     case Error::RenderLookTargetChanged: return "RenderLookTargetChanged";
@@ -247,6 +250,15 @@ std::string_view toString(ReloadError error) noexcept {
   }
   return "Unknown";
 }
+std::string_view toString(SceneEnvironmentFailure failure) noexcept {
+  switch (failure) {
+    case SceneEnvironmentFailure::Unavailable: return "Unavailable";
+    case SceneEnvironmentFailure::BuildOpenRequired: return "BuildOpenRequired";
+    case SceneEnvironmentFailure::PreparationFailed: return "PreparationFailed";
+  }
+  return "Unknown";
+}
+
 std::string_view toString(ApplyLookupError) noexcept { return "UnknownApply"; }
 
 std::string_view toString(RecoveryError error) noexcept {

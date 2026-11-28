@@ -28,6 +28,8 @@ constexpr std::string_view kVersionLine = "atlantis_scene_source_version: 8";
 constexpr std::string_view kLegacyVersionLine = "atlantis_scene_source_version: 7";
 constexpr std::string_view kPrefabVersionLine = "atlantis_scene_source_version: 9";
 constexpr std::string_view kPrefabBaselineVersionLine = "atlantis_scene_source_version: 10";
+constexpr std::string_view kEnvironmentVersionLine = "atlantis_scene_source_version: 11";
+constexpr std::string_view kEnvironmentPrefix = "environment: ";
 constexpr std::string_view kPrefabPrefix = "prefab=";
 constexpr std::string_view kBaselinePrefix = "prefabBaseline=";
 constexpr std::string_view kNodeCountPrefix = "node_count: ";
@@ -184,11 +186,13 @@ atlantis::Result<ParsedSceneSource, SceneSourceParseError> parseSceneSource(std:
   std::size_t lineIndex = 0;
 
   if (lineIndex >= lines.size() || (lines[lineIndex] != kVersionLine && lines[lineIndex] != kLegacyVersionLine &&
-                                  lines[lineIndex] != kPrefabVersionLine && lines[lineIndex] != kPrefabBaselineVersionLine)) {
+                                  lines[lineIndex] != kPrefabVersionLine && lines[lineIndex] != kPrefabBaselineVersionLine &&
+                                  lines[lineIndex] != kEnvironmentVersionLine)) {
     return ResultT::Err(SceneSourceParseError::UnknownSourceVersion);
   }
   const bool legacy = lines[lineIndex] == kLegacyVersionLine;
-  const bool supportsBaseline = lines[lineIndex] == kPrefabBaselineVersionLine;
+  const bool hasEnvironment = lines[lineIndex] == kEnvironmentVersionLine;
+  const bool supportsBaseline = hasEnvironment || lines[lineIndex] == kPrefabBaselineVersionLine;
   const bool supportsOrigin = supportsBaseline || lines[lineIndex] == kPrefabVersionLine;
   ++lineIndex;
 
@@ -217,6 +221,16 @@ atlantis::Result<ParsedSceneSource, SceneSourceParseError> parseSceneSource(std:
   }
   ++lineIndex;
 
+  std::optional<AssetGuid> environment;
+  if (hasEnvironment) {
+    if (lineIndex >= lines.size()) return ResultT::Err(SceneSourceParseError::MissingField);
+    if (!lines[lineIndex].starts_with(kEnvironmentPrefix))
+      return ResultT::Err(SceneSourceParseError::FieldOrderMismatch);
+    const auto guid = parseAssetGuid(lines[lineIndex++].substr(kEnvironmentPrefix.size()));
+    if (guid.isErr()) return ResultT::Err(SceneSourceParseError::MalformedGuid);
+    environment = guid.value();
+  }
+
   // Bound before allocating -- mirrors parseMeshSource()'s own
   // index_count guard (itself fixed in Plan 0012's own post-merge
   // review, D3's own note above): a declared node_count with no
@@ -228,6 +242,7 @@ atlantis::Result<ParsedSceneSource, SceneSourceParseError> parseSceneSource(std:
 
   ParsedSceneSource parsed;
   parsed.activeCameraNodeId = activeCameraNodeId;
+  parsed.environment = environment;
   parsed.nodes.reserve(nodeCount);
 
   for (std::uint32_t i = 0; i < nodeCount; ++i) {
@@ -576,7 +591,9 @@ atlantis::Result<ParsedSceneSource, SceneSourceParseError> parseSceneSource(std:
 
 std::string serializeSceneSource(const ParsedSceneSource& source) {
   std::string out;
-  if (std::ranges::any_of(source.nodes, [](const auto& node) { return node.prefabBaseline.has_value(); }))
+  if (source.environment)
+    out += kEnvironmentVersionLine;
+  else if (std::ranges::any_of(source.nodes, [](const auto& node) { return node.prefabBaseline.has_value(); }))
     out += kPrefabBaselineVersionLine;
   else if (std::ranges::any_of(source.nodes, [](const auto& node) { return node.prefabOrigin.has_value(); }))
     out += kPrefabVersionLine;
@@ -590,6 +607,11 @@ std::string serializeSceneSource(const ParsedSceneSource& source) {
   out += source.activeCameraNodeId.has_value() ? std::to_string(*source.activeCameraNodeId)
                                                 : std::string(kNoneToken);
   out += '\n';
+  if (source.environment) {
+    out += kEnvironmentPrefix;
+    out += toString(*source.environment);
+    out += '\n';
+  }
 
   for (const ParsedSceneNode& node : source.nodes) {
     out += kNodePrefix;

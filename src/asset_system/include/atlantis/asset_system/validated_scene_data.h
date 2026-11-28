@@ -61,6 +61,7 @@ class ValidatedSceneData {
   [[nodiscard]] const ValidatedSceneNode& node(std::size_t index) const noexcept { return nodes_[index]; }
   [[nodiscard]] std::optional<std::size_t> parentOf(std::size_t index) const noexcept { return parents_[index]; }
   [[nodiscard]] std::optional<std::size_t> activeCameraIndex() const noexcept { return activeCameraIndex_; }
+  [[nodiscard]] std::optional<AssetGuid> environment() const noexcept { return environment_; }
   // Plan 0047 P17 (ADR-0097 D5): the node's persistent identity. Decoding
   // guarantees one per node, non-nil and unique within the scene.
   [[nodiscard]] const EntityGuid& entityGuid(std::size_t index) const noexcept { return entityGuids_[index]; }
@@ -79,15 +80,18 @@ class ValidatedSceneData {
   friend atlantis::Result<ValidatedSceneData, SceneArtifactDecodeError> decodeScene(const CookedScene&);
 
   ValidatedSceneData(std::vector<ValidatedSceneNode> nodes, std::vector<std::optional<std::size_t>> parents,
-                      std::optional<std::size_t> activeCameraIndex, std::vector<EntityGuid> entityGuids)
+                      std::optional<std::size_t> activeCameraIndex, std::vector<EntityGuid> entityGuids,
+                      std::optional<AssetGuid> environment = {})
       : nodes_(std::move(nodes)),
         parents_(std::move(parents)),
         activeCameraIndex_(activeCameraIndex),
+        environment_(environment),
         entityGuids_(std::move(entityGuids)) {}
 
   std::vector<ValidatedSceneNode> nodes_;
   std::vector<std::optional<std::size_t>> parents_;
   std::optional<std::size_t> activeCameraIndex_;
+  std::optional<AssetGuid> environment_;
   std::vector<EntityGuid> entityGuids_;
 };
 

@@ -76,6 +76,7 @@ class RuntimeControlHost final : public atlantis::connection::RuntimeControl {
     atlantis::asset_system::AssetGuid scene;
     // Plan 0065 P4 (ADR-0131 D5): the World's generation; unset reads 0.
     std::function<std::uint64_t()> sceneGeneration;
+    std::function<connection::EffectiveSceneEnvironment()> sceneEnvironment;
     // Plan 0066 P4 (ADR-0132 D4): the union of the clients' Viewport overlays, drawn from the next frame on.
     std::function<void(const std::optional<atlantis::connection::ViewportOverlay>&)> setViewportOverlay;
     std::function<atlantis::connection::ViewportNavigationResult(

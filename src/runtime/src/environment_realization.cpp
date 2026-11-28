@@ -1,6 +1,10 @@
 #include <atlantis/profile.h>
 #include <atlantis/runtime/environment_realization.h>
 
+#include <atlantis/asset_system/environment_artifact.h>
+#include <atlantis/asset_system/load_environment.h>
+#include <atlantis/log.h>
+
 #include <atlantis/assert.h>
 #include <atlantis/render_graph/execution.h>
 #include <atlantis/render_graph/render_graph_builder.h>
@@ -10,6 +14,49 @@
 #include <cstring>
 
 namespace atlantis::runtime {
+
+std::optional<SceneEnvironmentSource> selectSceneEnvironment(
+    const asset_system::AssetCatalog& catalog, const asset_system::AssetGuid& asset) {
+  const auto* record = catalog.find(asset);
+  if (!record || record->type != asset_system::CatalogAssetType::Environment ||
+      record->artifactSchema != asset_system::kEnvironmentArtifactSchemaVersion) return std::nullopt;
+  return SceneEnvironmentSource{asset, record->artifact, record->metadata};
+}
+
+std::optional<asset_system::EnvironmentAssetData> loadSceneEnvironment(
+    const SceneEnvironmentSource& selection, const std::filesystem::path& catalogPath) {
+  namespace fs = std::filesystem;
+  fs::path artifact = selection.artifact;
+  fs::path metadata = selection.metadata;
+  if (selection.asset) {
+    std::error_code ec;
+    const auto catalog = fs::absolute(catalogPath, ec);
+    if (ec) return std::nullopt;
+    const auto root = fs::canonical(catalog.parent_path(), ec);
+    if (ec) return std::nullopt;
+    const auto contained = [&root](fs::path& file) {
+      std::error_code error;
+      file = fs::canonical(file, error);
+      if (error || !fs::is_regular_file(file, error) || error) return false;
+      const auto relative = file.lexically_relative(root);
+      return !relative.empty() && *relative.begin() != ".." && relative != ".";
+    };
+    if (!contained(artifact) || !contained(metadata)) {
+      ATLANTIS_LOG_ERROR("scene environment {} has missing or out-of-catalog paths",
+                         asset_system::toString(*selection.asset));
+      return std::nullopt;
+    }
+  }
+  auto data = selection.asset
+      ? asset_system::loadPreviewStudioEnvironment(artifact, metadata, selection.asset)
+      : asset_system::loadEnvironmentAsset(artifact, metadata);
+  if (data.isErr()) {
+    ATLANTIS_LOG_ERROR("scene environment {} artifact or metadata failed validation (code {})",
+        selection.asset ? asset_system::toString(*selection.asset) : "startup default", static_cast<int>(data.error()));
+    return std::nullopt;
+  }
+  return std::move(data.value());
+}
 
 atlantis::renderer::EnvironmentLighting EnvironmentLightingResources::borrowedView() const {
   ATLANTIS_CHECK(prefilteredEnvironment && environmentSampler && dfgLut && dfgSampler);

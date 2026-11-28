@@ -1,10 +1,10 @@
 # Plan 0150 — Scene Environment Lighting and Reflections V1
 
 - **Spec:** [Spec 0150](../specs/0150-scene-environment.md)
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Codex
-- **Joint Human Review:** Pending.
-- **Related ADR:** [ADR-0196](../adr/0196-scene-environment-selection-and-activation.md) (Proposed)
+- **Joint Human Review:** [Maintainer joint approval](https://github.com/slmao/Atlantis/pull/463#issuecomment-7236980882) of Spec/Plan 0150 and J1–J4 on 2026-11-28, authorizing S2–S4 after [maintainer merge](https://github.com/slmao/Atlantis/pull/463).
+- **Related ADR:** [ADR-0196](../adr/0196-scene-environment-selection-and-activation.md) (Accepted)
 
 ## Objective
 

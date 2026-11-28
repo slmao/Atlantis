@@ -399,12 +399,36 @@ int main(int argc, char** argv) {
     return atlantis::runtime::benchmark::runBenchmark(*cliResult.benchmark, std::move(config));
   }
 
+  RuntimeApplication* application = nullptr;  // Preview callbacks run only after Runtime initialization.
+  atlantis::runtime::AssetHost assets(config.assetCatalogPath, rebuild.get(),
+      {.available = [&application] { return application->meshPreviewAvailable(); },
+       .render = [&application, &config](const atlantis::asset_system::AssetGuid& guid,
+                                atlantis::asset_system::StaticMeshAssetData mesh) {
+         return application->previewMesh(config, guid, std::move(mesh));
+       },
+       .renderPair = [&application, &config](const atlantis::asset_system::AssetGuid& meshGuid,
+                                    const atlantis::asset_system::AssetGuid& materialGuid,
+                                    const atlantis::asset_system::StaticMeshAssetData& mesh,
+                                    const atlantis::asset_system::MaterialAssetData& material,
+                                    const atlantis::asset_system::TextureAssetData& texture,
+                       const atlantis::asset_system::TextureAssetData* normal,
+                       const atlantis::asset_system::TextureAssetData* emissive,
+                       const atlantis::asset_system::TextureAssetData* packed,
+                       const atlantis::asset_system::TextureAssetData* occlusion, bool studioIbl) {
+         return application->previewMeshMaterial(config, meshGuid, materialGuid, mesh, material, texture, normal, emissive, packed, occlusion, studioIbl);
+       }});
+  if (cliResult.projectAssets &&
+      atlantis::runtime::runningFromSceneDevelopmentBuild(ATLANTIS_RUNTIME_DEVELOPMENT_DIR))
+    assets.enableProjectReads(ATLANTIS_RUNTIME_ASSETS_SOURCE_DIR);
+  config.assetCatalogSnapshot = assets.catalog();
+
   auto appResult = createRuntimeApplication(config);
   if (appResult.isErr()) {
     ATLANTIS_LOG_ERROR("createRuntimeApplication() failed: {}", atlantis::runtime::toString(appResult.error()));
     return toProcessExitCode(RuntimeExitReason::InitializationFailed);
   }
   RuntimeApplication app = std::move(appResult.value());
+  application = &app;
   ATLANTIS_LOG_INFO("Runtime initialized");
 
   // Plan 0065 P5 (ADR-0129 D2, D3): the authoring session's host. Nothing
@@ -433,26 +457,6 @@ int main(int argc, char** argv) {
                                    : std::filesystem::path(ATLANTIS_RUNTIME_BISTRO_SCENE_SOURCE)});
   }
 #endif
-  atlantis::runtime::AssetHost assets(config.assetCatalogPath, rebuild.get(),
-      {.available = [&app] { return app.meshPreviewAvailable(); },
-       .render = [&app, &config](const atlantis::asset_system::AssetGuid& guid,
-                                atlantis::asset_system::StaticMeshAssetData mesh) {
-         return app.previewMesh(config, guid, std::move(mesh));
-       },
-       .renderPair = [&app, &config](const atlantis::asset_system::AssetGuid& meshGuid,
-                                    const atlantis::asset_system::AssetGuid& materialGuid,
-                                    const atlantis::asset_system::StaticMeshAssetData& mesh,
-                                    const atlantis::asset_system::MaterialAssetData& material,
-                                    const atlantis::asset_system::TextureAssetData& texture,
-                       const atlantis::asset_system::TextureAssetData* normal,
-                       const atlantis::asset_system::TextureAssetData* emissive,
-                       const atlantis::asset_system::TextureAssetData* packed,
-                       const atlantis::asset_system::TextureAssetData* occlusion, bool studioIbl) {
-         return app.previewMeshMaterial(config, meshGuid, materialGuid, mesh, material, texture, normal, emissive, packed, occlusion, studioIbl);
-       }});
-  if (cliResult.projectAssets &&
-      atlantis::runtime::runningFromSceneDevelopmentBuild(ATLANTIS_RUNTIME_DEVELOPMENT_DIR))
-    assets.enableProjectReads(ATLANTIS_RUNTIME_ASSETS_SOURCE_DIR);
   authoringSources.assets = &assets;
   atlantis::runtime::AuthoringHost authoring(app, std::move(authoringSources));
   std::unique_ptr<atlantis::connection::AssetConnection> execAssets;

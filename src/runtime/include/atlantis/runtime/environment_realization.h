@@ -1,6 +1,10 @@
 #pragma once
 
 #include <atlantis/asset_system/environment_types.h>
+#include <atlantis/asset_system/asset_catalog.h>
+
+#include <filesystem>
+#include <optional>
 #include <atlantis/renderer/environment_lighting.h>
 #include <atlantis/result.h>
 #include <atlantis/rhi/buffer.h>
@@ -16,6 +20,19 @@
 #include <vector>
 
 namespace atlantis::runtime {
+
+struct SceneEnvironmentSource {
+  std::optional<asset_system::AssetGuid> asset;
+  std::string artifact;
+  std::string metadata;
+  friend bool operator==(const SceneEnvironmentSource&, const SceneEnvironmentSource&) = default;
+};
+
+// Pure catalog admission. Actual paths and bytes are verified together at load.
+[[nodiscard]] std::optional<SceneEnvironmentSource> selectSceneEnvironment(
+    const asset_system::AssetCatalog& catalog, const asset_system::AssetGuid& asset);
+[[nodiscard]] std::optional<asset_system::EnvironmentAssetData> loadSceneEnvironment(
+    const SceneEnvironmentSource& selection, const std::filesystem::path& catalogPath);
 
 enum class EnvironmentRealizationError {
   PrefilteredTextureCreateFailed,

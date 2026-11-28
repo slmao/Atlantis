@@ -10,6 +10,7 @@ using System.Threading.Tasks;
 using Atlantis.Gameplay;
 using Atlantis.Gameplay.Remote;
 using A = Atlantis.Gameplay.Assets;
+using SceneEnvironmentCommand = Atlantis.Gameplay.Authoring.SetSceneEnvironment;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 
@@ -162,7 +163,9 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
         Declare("authoring.apply_status", "authoring.applyStatus", "Read a retained request and current projection non-destructively; absent/null id is global newest, never proof of a lost caller receipt. Inspect state, not tool success.", AuthoringModel,
             ToolSchemas.ApplyStatusParameters()),
         Declare("authoring.save", "authoring.save", "Save a hand-authored source; imported sources are refused.", AuthoringModel),
-        Declare("authoring.document_state", "authoring.documentState", "Read document identity, revision and source persistence; null before open.", AuthoringModel),
+        Declare("authoring.document_state", "authoring.documentState",
+            "Read document identity, persistence and optionally its environment choice; null before open.", AuthoringModel,
+            ToolSchemas.DocumentStateParameters()),
         Declare("authoring.save_if_current", "authoring.saveIfCurrent", "Save only the reviewed hand-authored document revision.", AuthoringModel,
             DocumentParameters(allowAbsent: false)),
         Declare("authoring.reopen_if_current", "authoring.reopenIfCurrent", "Reopen only the reviewed revision. Explicit null opens only while absent.", AuthoringModel,
@@ -347,6 +350,14 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
             if (mapping.Method == "authoring.submitTransaction")
             {
                 var commands = wireParameters.Find("commands")!.Items;
+                var environment = commands.FirstOrDefault(c => c.Find("kind")?.AsString == "SetSceneEnvironment");
+                if (environment is not null)
+                {
+                    if (commands.Count != 1 || Codec.DecodeAuthoringCommand(environment) is not SceneEnvironmentCommand choice)
+                        return Error("InvalidArguments: submit one guarded environment choice");
+                    if (!SupportsSceneEnvironment()) return Error("Unsupported: scene environment");
+                    return SetSceneEnvironment(wireParameters, choice);
+                }
                 bool property = commands.Any(c => c.Find("kind")?.AsString == "RequireDocumentRevision");
                 bool transform = commands.Any(c => c.Find("kind")?.AsString == "RequireTransformBatchRevision");
                 bool duplicate = commands.Any(c => c.Find("kind")?.AsString == "RequireDuplicateBatchRevision");
@@ -924,9 +935,36 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
         return ToolSchemas.Parameters(("expected", allowAbsent ? ToolSchemas.Nullable(token) : token));
     }
 
+    private bool SupportsSceneEnvironment()
+    {
+        var reply = session.Request("control.status", JsonValue.NewObject());
+        return reply.Find("result") is { } status && Codec.DecodeStatus(status)?.SceneEnvironment is not null;
+    }
+
+    private CallToolResult SetSceneEnvironment(JsonValue parameters, SceneEnvironmentCommand choice)
+    {
+        string unknown = $" Scene environment outcome unknown for {choice.Choice.Asset?.ToString() ?? "Inherit"}. " +
+            "Check the original Runtime's document and Apply status before retrying.";
+        bool mayHaveSent = true;
+        try
+        {
+            var reply = session.Request("authoring.submitTransaction", parameters, out mayHaveSent);
+            if (reply.Find("error") is { } error) return Forward(error, true);
+            return reply.Find("result") is { } result &&
+                Codec.DecodeTransactionTicket(result) is { First.Value: > 0, Count: 1 }
+                ? Forward(result, false) : Error("ProtocolError: malformed environment transaction receipt." + unknown);
+        }
+        catch (RemoteException error)
+        {
+            return Error(error.Message + (mayHaveSent ? unknown : " Scene environment transaction was not sent."));
+        }
+    }
+
     private CallToolResult DocumentOperation(string method, JsonValue parameters)
     {
         bool reading = method == "authoring.documentState", saving = method == "authoring.saveIfCurrent";
+        bool withEnvironment = reading && parameters.Find("withEnvironment") is { IsBool: true, AsBool: true };
+        if (withEnvironment && !SupportsSceneEnvironment()) return Error("Unsupported: scene environment");
         var expected = parameters.Find("expected");
         var token = expected is null ? null : Codec.DecodeDocumentToken(expected);
         if (!reading && token is null && (saving || expected is not { IsNull: true }))
@@ -947,7 +985,8 @@ internal sealed partial class ToolRegistry(IAtlantisSession session)
         {
             if (result.Find("ok") is { } ok &&
                 (reading && ok.IsNull || Codec.DecodeDocumentState(ok) is { } state &&
-                    (reading || Codec.ValidDocumentReceipt(state, token, saving)))) return Forward(result, false);
+                    (reading ? state.Environment.HasValue == withEnvironment : Codec.ValidDocumentReceipt(state, token, saving))))
+                return Forward(result, false);
             if (!reading && result.Find("err") is { } err && Codec.DecodeDocumentError(err, saving) is not null)
                 return Forward(result, true);
         }

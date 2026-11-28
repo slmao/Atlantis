@@ -155,6 +155,15 @@ struct DocumentToken {
   std::uint64_t documentRevision = 0;
   friend bool operator==(const DocumentToken&, const DocumentToken&) = default;
 };
+// Empty asset means Inherit. The command is the sole member of its transaction.
+struct SceneEnvironmentChoice {
+  std::optional<AssetGuid> asset;
+  friend bool operator==(const SceneEnvironmentChoice&, const SceneEnvironmentChoice&) = default;
+};
+struct SetSceneEnvironment {
+  DocumentToken expectedDocument;
+  SceneEnvironmentChoice choice;
+};
 /// First command of a guarded, names-only transaction (ADR-0189).
 struct RequireNameBatchDocument {
   DocumentToken expectedDocument;
@@ -180,7 +189,7 @@ using Command =
     std::variant<SetProperty, CreateNode, DestroyNode, AddComponent, RemoveComponent, SetParent, SetActiveCamera,
                  SetNodeName, SwapAdjacentSiblings, MoveSiblingRelative, RequireDocumentRevision,
                  RequireTransformBatchRevision, RequireDuplicateBatchRevision, SetPrefabOrigin, RequireNameBatchDocument,
-                 RequireRenderLookDocument>;
+                 RequireRenderLookDocument, SetSceneEnvironment>;
 
 // ---------------------------------------------------------------- events
 
@@ -353,6 +362,9 @@ enum class Error : std::uint8_t {
   DuplicateBatchStaleRevision,
   InvalidGuardedNameBatch,
   NameBatchStaleDocument,
+  InvalidSceneEnvironment,
+  SceneEnvironmentStaleDocument,
+  SceneEnvironmentUnavailable,
   InvalidGuardedRenderLook,
   RenderLookStaleDocument,
   RenderLookTargetChanged,
@@ -386,6 +398,7 @@ struct DocumentState {
   Provenance provenance = Provenance::HandAuthored;
   std::uint64_t lastPersistedRevision = 0;
   bool dirty = false;
+  std::optional<SceneEnvironmentChoice> environment{};  // present only in opted-in readback
   friend bool operator==(const DocumentState&, const DocumentState&) = default;
 };
 enum class DocumentError : std::uint8_t {
@@ -532,6 +545,13 @@ struct ApplyReceipt {
 };
 enum class ApplyState : std::uint8_t { Pending, Applied, Failed, Superseded };
 enum class ReloadError : std::uint8_t { ScenePreparationFailed, RenderPreparationFailed, RuntimeStopped };
+enum class SceneEnvironmentFailure : std::uint8_t { Unavailable, BuildOpenRequired, PreparationFailed };
+struct SceneEnvironmentApplyDetail {
+  SceneEnvironmentChoice requested;
+  SceneEnvironmentFailure failure;
+  friend bool operator==(const SceneEnvironmentApplyDetail&, const SceneEnvironmentApplyDetail&) = default;
+};
+[[nodiscard]] std::string_view toString(SceneEnvironmentFailure failure) noexcept;
 enum class ApplyLookupError : std::uint8_t { UnknownApply };
 [[nodiscard]] std::string_view toString(ApplyState state) noexcept;
 [[nodiscard]] std::string_view toString(ReloadError error) noexcept;
@@ -542,6 +562,7 @@ struct ApplyRecord {
   std::optional<std::uint64_t> generation;
   std::optional<ReloadError> error;
   std::optional<ApplyId> supersededBy;
+  std::optional<SceneEnvironmentApplyDetail> environmentDetail{};
   friend bool operator==(const ApplyRecord&, const ApplyRecord&) = default;
 };
 struct ApplyProjection {
@@ -617,6 +638,10 @@ class AuthoringConnection {
   // first open only; neither mutation applies the document to the Runtime.
   [[nodiscard]] virtual Result<std::optional<authoring::DocumentState>, authoring::DocumentFailure>
   documentState() const {
+    return decltype(documentState())::Err({authoring::DocumentError::Unsupported});
+  }
+  [[nodiscard]] virtual Result<std::optional<authoring::DocumentState>, authoring::DocumentFailure>
+  documentStateWithEnvironment() const {
     return decltype(documentState())::Err({authoring::DocumentError::Unsupported});
   }
   virtual Result<authoring::DocumentState, authoring::DocumentFailure>

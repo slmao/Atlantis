@@ -76,6 +76,7 @@ RuntimeControlHost::Target RuntimeControlHost::forApplication(RuntimeApplication
     return application.pickViewport(stamp, kind, rays);
   };
   target.sceneGeneration = [&application] { return application.sceneGeneration(); };
+  target.sceneEnvironment = [&application] { return application.sceneEnvironment(); };
   return target;
 }
 
@@ -144,7 +145,8 @@ connection::RuntimeStatus RuntimeControlHost::status() {
                                    static_cast<bool>(target_.captureRenderLook),
                                    static_cast<bool>(target_.captureRenderLook),
                                    static_cast<bool>(target_.captureMaterialDiagnostic),
-                                   static_cast<bool>(target_.captureDirectionalShadowDiagnostic)};
+                                   static_cast<bool>(target_.captureDirectionalShadowDiagnostic),
+                                   target_.sceneEnvironment ? std::optional{target_.sceneEnvironment()} : std::nullopt};
 }
 
 connection::DirectionalShadowDiagnosticResult RuntimeControlHost::captureDirectionalShadowDiagnostic(

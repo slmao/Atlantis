@@ -1,4 +1,5 @@
 #include <atlantis/asset_system/scene_artifact.h>
+#include <atlantis/asset_system/scene_source.h>
 
 #include <algorithm>
 #include <array>
@@ -85,16 +86,19 @@ void appendFloatLE(std::vector<std::byte>& out, float value) { appendU32LE(out, 
 std::vector<std::byte> encodeSceneArtifact(const std::vector<ValidatedSceneNode>& nodes,
                                             const std::vector<std::optional<std::size_t>>& parents,
                                             std::optional<std::size_t> activeCameraIndex,
-                                            const std::vector<EntityGuid>& entityGuids) {
+                                            const std::vector<EntityGuid>& entityGuids,
+                                            std::optional<AssetGuid> environment) {
   std::vector<std::byte> out;
-  out.reserve(kSceneArtifactHeaderSizeBytes + nodes.size() * kSceneArtifactNodeRecordSizeBytes);
+  const auto extensionSize = environment ? environment->bytes.size() : 0;
+  out.reserve(kSceneArtifactHeaderSizeBytes + extensionSize + nodes.size() * kSceneArtifactNodeRecordSizeBytes);
 
   for (char c : kMagic) out.push_back(static_cast<std::byte>(c));
-  appendU32LE(out, kSceneArtifactSchemaVersion);
+  appendU32LE(out, environment ? kSceneEnvironmentArtifactSchemaVersion : kSceneArtifactSchemaVersion);
   appendU32LE(out, static_cast<std::uint32_t>(nodes.size()));
   appendU32LE(out, activeCameraIndex.has_value() ? 1U : 0U);
   appendU32LE(out, activeCameraIndex.has_value() ? static_cast<std::uint32_t>(*activeCameraIndex) : 0U);
-  appendU32LE(out, 0U);  // reserved
+  appendU32LE(out, environment ? kSceneEnvironmentSemanticVersion : 0U);
+  if (environment) out.insert(out.end(), environment->bytes.begin(), environment->bytes.end());
 
   for (std::size_t i = 0; i < nodes.size(); ++i) {
     const ValidatedSceneNode& node = nodes[i];
@@ -165,14 +169,16 @@ atlantis::Result<DecodedSceneArtifact, SceneArtifactDecodeError> decodeSceneArti
   }
 
   const std::uint32_t schemaVersion = readU32LE(bytes.data() + 4);
-  if (schemaVersion != kSceneArtifactSchemaVersion) {
+  const bool hasEnvironment = schemaVersion == kSceneEnvironmentArtifactSchemaVersion;
+  if ((!hasEnvironment && schemaVersion != kSceneArtifactSchemaVersion) ||
+      (hasEnvironment && readU32LE(bytes.data() + 20) != kSceneEnvironmentSemanticVersion)) {
     return ResultT::Err(SceneArtifactDecodeError::UnknownSchemaVersion);
   }
 
   const std::uint32_t nodeCount = readU32LE(bytes.data() + 8);
   const std::uint32_t hasActiveCameraFlag = readU32LE(bytes.data() + 12);
   const std::uint32_t activeCameraIndexRaw = readU32LE(bytes.data() + 16);
-  // Byte 20..23 ("reserved") is intentionally never read.
+  const auto headerSize = kSceneArtifactHeaderSizeBytes + (hasEnvironment ? GuidBytes{}.size() : 0);
 
   // Step 3: EmptyScene, re-checked independently of the cooker.
   if (nodeCount == 0) return ResultT::Err(SceneArtifactDecodeError::EmptyScene);
@@ -182,13 +188,20 @@ atlantis::Result<DecodedSceneArtifact, SceneArtifactDecodeError> decodeSceneArti
   if (nodeCount > kMaxSceneArtifactNodeCount) return ResultT::Err(SceneArtifactDecodeError::NodeCountOutOfRange);
 
   const std::uint64_t expectedSize =
-      static_cast<std::uint64_t>(kSceneArtifactHeaderSizeBytes) +
+      static_cast<std::uint64_t>(headerSize) +
       static_cast<std::uint64_t>(nodeCount) * kSceneArtifactNodeRecordSizeBytes;
   if (static_cast<std::uint64_t>(bytes.size()) != expectedSize) {
     return ResultT::Err(SceneArtifactDecodeError::SizeMismatch);
   }
 
   DecodedSceneArtifact decoded;
+  if (hasEnvironment) {
+    GuidBytes bytesFromHeader{};
+    std::copy_n(bytes.data() + kSceneArtifactHeaderSizeBytes, bytesFromHeader.size(), bytesFromHeader.begin());
+    const auto environment = assetGuidFromBytes(bytesFromHeader);
+    if (environment.isErr()) return ResultT::Err(SceneArtifactDecodeError::InvalidEnvironmentGuid);
+    decoded.environment = environment.value();
+  }
   decoded.nodes.reserve(nodeCount);
   decoded.parents.reserve(nodeCount);
 
@@ -196,7 +209,7 @@ atlantis::Result<DecodedSceneArtifact, SceneArtifactDecodeError> decodeSceneArti
   // finite-value checks.
   for (std::uint32_t i = 0; i < nodeCount; ++i) {
     const std::byte* record =
-        bytes.data() + kSceneArtifactHeaderSizeBytes + static_cast<std::size_t>(i) * kSceneArtifactNodeRecordSizeBytes;
+        bytes.data() + headerSize + static_cast<std::size_t>(i) * kSceneArtifactNodeRecordSizeBytes;
 
     ValidatedSceneNode node;
     node.transform.positionX = readFloatLE(record + 0);
