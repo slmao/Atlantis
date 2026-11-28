@@ -138,6 +138,7 @@ atlantis::Result<AuthoringScene, SceneMappingError> toAuthoringScene(const Parse
     if (camera == indexOfNodeId.end()) return ResultT::Err(SceneMappingError::UndeclaredActiveCameraReference);
     scene.activeCamera = source.nodes[camera->second].entityGuid;
   }
+  scene.environment = source.environment;
   return ResultT::Ok(std::move(scene));
 }
 
@@ -181,6 +182,7 @@ atlantis::Result<ParsedSceneSource, SceneMappingError> toParsedSceneSource(const
     if (camera == nodeIdOfGuid.end()) return ResultT::Err(SceneMappingError::DanglingActiveCameraReference);
     source.activeCameraNodeId = camera->second;
   }
+  source.environment = scene.environment;
   return ResultT::Ok(std::move(source));
 }
 

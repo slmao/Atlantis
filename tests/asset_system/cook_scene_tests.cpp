@@ -1,4 +1,5 @@
 #include <atlantis/asset_system/cook_scene.h>
+#include <atlantis/asset_system/authoring_scene_mapping.h>
 
 #include <atlantis/asset_system/asset_id.h>
 #include <atlantis/asset_system/logical_path.h>
@@ -549,4 +550,32 @@ TEST_CASE("cookScene Plan 0044: accepts bloom fields at their closed boundaries"
   for (const char* group : groups) {
     DYNAMIC_SECTION(group) { CHECK(cookOneFogCamera("bloom_at_boundary", group).isOk()); }
   }
+}
+
+TEST_CASE("scene environment round-trips through v11 and artifact v8", "[asset_system][scene][environment]") {
+  const auto environment = testAssetGuid("environment");
+  auto source = parseSceneSource(kValidThreeNodeSource).value();
+  const auto id = testAssetGuid("scene");
+  const auto legacy = cookSceneSource(kValidThreeNodeSource, id).value();
+  REQUIRE_FALSE(decodeScene(legacy).value().environment());
+  source.environment = environment;
+  const auto v11 = serializeSceneSource(source);
+  CHECK(v11.starts_with("atlantis_scene_source_version: 11\nnode_count: 3\nactive_camera: 3\nenvironment: "));
+  CHECK(parseSceneSource(v11).value().environment == environment);
+  const auto mapped = scene::toAuthoringScene(source);
+  REQUIRE(mapped.isOk());
+  CHECK(mapped.value().environment == environment);
+  auto v8 = cookSceneSource(v11, id).value();
+  CHECK(v8 == cookSceneToMemory(mapped.value(), id).value());
+  CHECK(v8.artifactBytes.size() == legacy.artifactBytes.size() + environment.bytes.size());
+  CHECK(decodeScene(v8).value().environment() == environment);
+  CHECK(v8.metadataText.find("schema_version: 8\n") != std::string::npos);
+  v8.artifactBytes[20] = std::byte{2};
+  CHECK(decodeScene(v8).error() == SceneArtifactDecodeError::UnknownSchemaVersion);
+
+  auto malformed = v11;
+  malformed.replace(malformed.find(toString(environment)), 36, "00000000-0000-0000-0000-000000000000");
+  CHECK(parseSceneSource(malformed).error() == SceneSourceParseError::MalformedGuid);
+  source.environment.reset();
+  CHECK(cookSceneSource(serializeSceneSource(source), id).value() == legacy);
 }

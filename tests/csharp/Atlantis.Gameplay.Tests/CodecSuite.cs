@@ -454,7 +454,7 @@ public static class CodecSuite
             t.Check(wires.ContainsKey(name) && Codec.DecodeAuthoringError(wires[name]) == error, "the refusal " + error);
             ++index;
         }
-        t.Equal(38, index, "the AuthoringError set has the C++ set's 38 names");
+        t.Equal(41, index, "the AuthoringError set has the C++ set's 41 names");
         foreach (A.OpenError error in Enum.GetValues<A.OpenError>())
         {
             t.Check(Codec.DecodeOpenError(wires["authoring.open_error." + error]) == error, "the open error " + error);

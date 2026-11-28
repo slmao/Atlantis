@@ -356,13 +356,14 @@ RuntimeApplication::RuntimeApplication(PlatformSession&& session) noexcept
 RuntimeApplication::~RuntimeApplication() { shutdown(); }
 
 atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializeSteps(
-    const BootstrapConfig& config) {
+    const BootstrapConfig& launch) {
+  using InitResult = Result<std::monostate, RuntimeInitError>;
+  BootstrapConfig config = launch;
   // Step 1 (Platform session) already ran in createRuntimeApplication(),
   // before this object existed -- platformSession_ was move-constructed
   // from it directly, never assigned into after the fact (PlatformSession's
   // move-assignment operator is deleted; see platform_session.h).
 
-  const bool hasEnvironment = !config.environmentArtifactPath.empty();
   if (validateEnvironmentBootstrapConfig(config).isErr()) {
     ATLANTIS_LOG_ERROR("Invalid optional environment bootstrap configuration");
     lifecycle_.markFailed();
@@ -382,6 +383,41 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
     ATLANTIS_LOG_ERROR("Invalid shadow-casting shader bootstrap configuration");
     lifecycle_.markFailed();
     return shadowConfigResult;
+  }
+
+  sceneEnvironmentCatalog_ = config.assetCatalogSnapshot;
+  if (!sceneEnvironmentCatalog_) {
+    auto catalog = asset_system::loadAssetCatalog(config.assetCatalogPath);
+    if (catalog.isErr()) {
+      ATLANTIS_LOG_ERROR("loadAssetCatalog() failed: {}", asset_system::toString(catalog.error()));
+      lifecycle_.markFailed();
+      return InitResult::Err(RuntimeInitError::AssetCatalogLoadFailed);
+    }
+    sceneEnvironmentCatalog_ = std::make_shared<const asset_system::AssetCatalog>(std::move(catalog.value()));
+  }
+  auto decodedScene = decodeCatalogScene(*sceneEnvironmentCatalog_, config.sceneAsset);
+  if (decodedScene.isErr()) {
+    lifecycle_.markFailed();
+    return InitResult::Err(decodedScene.error());
+  }
+  if (!launch.environmentArtifactPath.empty())
+    startupEnvironment_ = SceneEnvironmentSource{{}, launch.environmentArtifactPath, launch.environmentMetadataPath};
+  const auto selected = decodedScene.value().environment();
+  activeEnvironment_ = selected ? selectSceneEnvironment(*sceneEnvironmentCatalog_, *selected) : startupEnvironment_;
+  if (selected && !activeEnvironment_) {
+    ATLANTIS_LOG_ERROR("scene environment {} is missing or has an unsupported catalog record", asset_system::toString(*selected));
+    lifecycle_.markFailed();
+    return InitResult::Err(RuntimeInitError::EnvironmentLoadFailed);
+  }
+  if (activeEnvironment_) {
+    config.environmentArtifactPath = activeEnvironment_->artifact;
+    config.environmentMetadataPath = activeEnvironment_->metadata;
+  }
+  const bool hasEnvironment = activeEnvironment_.has_value();
+  if (validateEnvironmentBootstrapConfig(config).isErr()) {
+    ATLANTIS_LOG_ERROR("Invalid environment shader configuration for the selected scene");
+    lifecycle_.markFailed();
+    return InitResult::Err(RuntimeInitError::EnvironmentConfigInvalid);
   }
 
   // Step 2: shader load (SPIR-V + reflection JSON) and VertexInputLayout resolution.
@@ -1146,7 +1182,8 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   // default, harmless states (std::nullopt / empty) on any failure
   // path, so RuntimeApplication never reaches Running with a partially-
   // published scene.
-  auto sceneLoadResult = loadAndBakeScene(config, device_.get(), vertexInputLayout_);
+  auto sceneLoadResult = loadAndBakeScene(config, device_.get(), vertexInputLayout_,
+                                          sceneEnvironmentCatalog_.get(), std::move(decodedScene.value()));
   if (sceneLoadResult.isErr()) {
     ATLANTIS_LOG_ERROR("loadAndBakeScene() failed");
     lifecycle_.markFailed();
@@ -1155,15 +1192,22 @@ atlantis::Result<std::monostate, RuntimeInitError> RuntimeApplication::initializ
   SceneLoadOutcome& outcome = sceneLoadResult.value();
 
   std::optional<atlantis::asset_system::EnvironmentAssetData> loadedEnvironment;
-  if (hasEnvironment) {
-    auto environmentResult = atlantis::asset_system::loadEnvironmentAsset(config.environmentArtifactPath,
-                                                                           config.environmentMetadataPath);
-    if (environmentResult.isErr()) {
-      ATLANTIS_LOG_ERROR("loadEnvironmentAsset() failed");
+  if (activeEnvironment_) {
+    loadedEnvironment = loadSceneEnvironment(*activeEnvironment_, config.assetCatalogPath);
+    if (!loadedEnvironment) {
       lifecycle_.markFailed();
-      return atlantis::Result<std::monostate, RuntimeInitError>::Err(RuntimeInitError::EnvironmentLoadFailed);
+      return InitResult::Err(RuntimeInitError::EnvironmentLoadFailed);
     }
-    loadedEnvironment = std::move(environmentResult.value());
+    if (selected) {
+      auto realized = uploadSceneEnvironment(*loadedEnvironment);
+      if (realized.isErr()) {
+        ATLANTIS_LOG_ERROR("scene environment {} GPU preparation failed", asset_system::toString(*selected));
+        lifecycle_.markFailed();
+        return InitResult::Err(RuntimeInitError::EnvironmentLoadFailed);
+      }
+      environmentLightingResources_.emplace(std::move(realized.value()));
+      loadedEnvironment.reset();
+    }
   }
 
   // Plan 0052 P9: the scene moves to the heap -- its address must survive
@@ -1297,20 +1341,77 @@ void RuntimeApplication::stopSceneReloads() {
   pendingReloadId_.reset(); pendingSceneReload_.reset();
 }
 
+connection::EffectiveSceneEnvironment RuntimeApplication::sceneEnvironment() const noexcept {
+  return {activeEnvironment_.has_value(), activeEnvironment_ ? activeEnvironment_->asset : std::nullopt};
+}
+
+bool RuntimeApplication::hasSceneEnvironment(const asset_system::AssetGuid& asset) const {
+  return sceneEnvironmentCatalog_ && selectSceneEnvironment(*sceneEnvironmentCatalog_, asset).has_value();
+}
+
+Result<EnvironmentLightingResources, connection::authoring::ReloadError>
+RuntimeApplication::uploadSceneEnvironment(const asset_system::EnvironmentAssetData& data) {
+  using Error = connection::authoring::ReloadError;
+  using UploadResult = Result<EnvironmentLightingResources, Error>;
+  auto candidate = realizeEnvironmentCandidate(*device_, data);
+  if (candidate.isErr()) return UploadResult::Err(Error::RenderPreparationFailed);
+  auto target = device_->createOffscreenTarget({.extent = {1, 1}, .debugName = ATL_DEBUG_NAME("environment_upload")});
+  if (target.isErr()) return UploadResult::Err(Error::RenderPreparationFailed);
+  auto attachment = target.value()->acquireTarget();
+  auto commands = device_->createCommandList();
+  if (attachment.isErr() || commands.isErr()) return UploadResult::Err(Error::RenderPreparationFailed);
+  recordEnvironmentUploads(*commands.value(), candidate.value());
+  const auto submitted = device_->submit(std::move(commands.value()), *attachment.value());
+  if (submitted.isErr()) {
+    if (submitted.error() == rhi::SubmitError::DeviceLost) {
+      lifecycle_.markFailed();
+      return UploadResult::Err(Error::RuntimeStopped);
+    }
+    return UploadResult::Err(Error::RenderPreparationFailed);
+  }
+  if (device_->waitIdle().isErr()) {
+    incompleteEnvironmentUpload_.emplace(std::move(candidate.value()), std::move(target.value()),
+                                         std::move(attachment.value()));
+    lifecycle_.markFailed();
+    return UploadResult::Err(Error::RuntimeStopped);
+  }
+  return UploadResult::Ok(std::move(candidate.value().resources));
+}
+
 void RuntimeApplication::performPendingSceneReload() {
   ATL_PROFILE_SCOPE("SceneReload");
   const atlantis::asset_system::ValidatedSceneData scene = std::move(*pendingSceneReload_);
   pendingSceneReload_.reset();
   const auto applyId = std::exchange(pendingReloadId_, std::nullopt);
-  const auto failed = [&](connection::authoring::ReloadError error, std::string_view detail) {
+  namespace ac = connection::authoring;
+  const auto failed = [&](ac::ReloadError error, std::string_view detail,
+                          std::optional<ac::SceneEnvironmentApplyDetail> environmentDetail = {}) {
     if (applyId) {
-      reloadResult_.emplace(*applyId, Result<std::uint64_t, connection::authoring::ReloadError>::Err(error));
+      reloadResult_.emplace(*applyId, Result<std::uint64_t, ac::ReloadError>::Err(error), environmentDetail);
       ATLANTIS_LOG_ERROR("apply {} failed ({}): {}", connection::authoring::toString(*applyId),
                          connection::authoring::toString(error), detail);
     } else {
       ATLANTIS_LOG_ERROR("scene reload failed: {}", detail);
     }
   };
+
+  const auto selected = scene.environment();
+  auto environment = selected && sceneEnvironmentCatalog_ ? selectSceneEnvironment(*sceneEnvironmentCatalog_, *selected)
+                                                           : startupEnvironment_;
+  const auto environmentFailed = [&](ac::SceneEnvironmentFailure reason, ac::ReloadError error) {
+    const auto guid = selected ? asset_system::toString(*selected) : std::string("Inherit");
+    ATLANTIS_LOG_ERROR("scene environment {} Apply: {}", guid, ac::toString(reason));
+    failed(error, ac::toString(reason), ac::SceneEnvironmentApplyDetail{{selected}, reason});
+  };
+  if (selected && (!environment || !environment->asset)) {
+    environmentFailed(ac::SceneEnvironmentFailure::Unavailable, ac::ReloadError::ScenePreparationFailed);
+    return;
+  }
+  if (activeEnvironment_.has_value() != environment.has_value()) {
+    environmentFailed(ac::SceneEnvironmentFailure::BuildOpenRequired, ac::ReloadError::RenderPreparationFailed);
+    return;
+  }
+  const bool switching = environment != activeEnvironment_;
 
   // Resolve, load what is missing and bake -- nothing of this application is
   // touched yet, so any failure leaves the current World as it was.
@@ -1343,6 +1444,25 @@ void RuntimeApplication::performPendingSceneReload() {
       return;
     }
     newBloomTargets.emplace(std::move(created.value()));
+  }
+
+  std::optional<EnvironmentLightingResources> newEnvironment;
+  if (switching) {
+    if (incompleteRenderLook_ || incompleteEnvironmentUpload_) {
+      environmentFailed(ac::SceneEnvironmentFailure::PreparationFailed, ac::ReloadError::RuntimeStopped);
+      return;
+    }
+    auto data = loadSceneEnvironment(*environment, assetCatalogPath_);
+    if (!data) {
+      environmentFailed(ac::SceneEnvironmentFailure::Unavailable, ac::ReloadError::ScenePreparationFailed);
+      return;
+    }
+    auto uploaded = uploadSceneEnvironment(*data);
+    if (uploaded.isErr()) {
+      environmentFailed(ac::SceneEnvironmentFailure::PreparationFailed, uploaded.error());
+      return;
+    }
+    newEnvironment.emplace(std::move(uploaded.value()));
   }
 
   auto bakedScene = std::make_unique<atlantis::world::BakedScene>(std::move(outcome.scene));
@@ -1385,6 +1505,11 @@ void RuntimeApplication::performPendingSceneReload() {
   for (auto& [id, material] : outcome.newMaterials) materialDataMap_.emplace(id, std::move(material));
   for (auto& [id, texture] : outcome.newTextures) textureDataMap_.emplace(id, std::move(texture));
 
+  if (newEnvironment) {
+    environmentData_.reset();
+    environmentLightingResources_.emplace(std::move(*newEnvironment));
+    activeEnvironment_ = std::move(environment);
+  }
   sceneWantsBloom_ = wantsBloom;
   if (newBloomTargets.has_value()) {
     bloomTargets_.reset();
@@ -2959,12 +3084,12 @@ RuntimeExitReason RuntimeApplication::shutdown() {
 
   // Frames and between-frame capture/preview work require a Running
   // application. Drain outstanding submissions before releasing their resources.
-  if (device_ && lifecycle_.hasEverRun()) {
+  if (device_ && (lifecycle_.hasEverRun() || incompleteEnvironmentUpload_)) {
     auto result = device_->waitIdle();
     if (result.isErr()) {
       ATLANTIS_LOG_ERROR("waitIdle() failed during shutdown");
-      if (incompleteRenderLook_ && result.error() != rhi::SubmitError::DeviceLost) {
-        ATLANTIS_LOG_ERROR("render look submission is still unsettled; abandoning this Runtime");
+      if ((incompleteRenderLook_ || incompleteEnvironmentUpload_) && result.error() != rhi::SubmitError::DeviceLost) {
+        ATLANTIS_LOG_ERROR("a capture or environment upload is still unsettled; abandoning this Runtime");
         std::quick_exit(EXIT_FAILURE);
       }
       hadFailure = true;  // a wait that cannot complete cleanly is itself an unrecoverable
@@ -2974,6 +3099,7 @@ RuntimeExitReason RuntimeApplication::shutdown() {
 
   incompleteMeshPreview_.reset();  // Spec 0091 R3: after the terminal drain, before Device teardown.
   incompleteRenderLook_.reset();  // ADR-0192: after completion or confirmed device loss.
+  incompleteEnvironmentUpload_.reset();  // ADR-0196: same terminal drain requirement.
 
   // Plan 0018 Section P10: explicit clear, texture/sampler-before-
   // material order (D9) -- material_.reset()'s own former single line

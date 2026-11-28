@@ -41,7 +41,8 @@ namespace {
 }  // namespace
 
 static atlantis::Result<EnvironmentAssetData, EnvironmentLoadError> decodeEnvironment(
-    const std::vector<std::byte>& artifactBytes, std::string_view metadataText) {
+    const std::vector<std::byte>& artifactBytes, std::string_view metadataText,
+    std::optional<AssetGuid> expectedGuid = {}) {
   using ResultT = atlantis::Result<EnvironmentAssetData, EnvironmentLoadError>;
   auto artifactResult = decodeEnvironmentArtifact(artifactBytes);
   if (artifactResult.isErr()) return ResultT::Err(EnvironmentLoadError::ArtifactDecodeFailed);
@@ -50,7 +51,8 @@ static atlantis::Result<EnvironmentAssetData, EnvironmentLoadError> decodeEnviro
 
   DecodedEnvironmentArtifact& artifact = artifactResult.value();
   const EnvironmentMetadata& metadata = metadataResult.value();
-  if (artifact.assetId != metadata.assetId || metadata.assetId != assetKey(metadata.assetGuid) ||
+  if ((expectedGuid && *expectedGuid != metadata.assetGuid) ||
+      artifact.assetId != metadata.assetId || metadata.assetId != assetKey(metadata.assetGuid) ||
       artifact.data.faceSize != metadata.faceSize || artifact.data.mipCount != metadata.mipCount ||
       artifact.data.dfgWidth != metadata.dfgWidth || artifact.data.dfgHeight != metadata.dfgHeight) {
     return ResultT::Err(EnvironmentLoadError::MetadataArtifactMismatch);
@@ -69,7 +71,8 @@ atlantis::Result<EnvironmentAssetData, EnvironmentLoadError> loadEnvironmentAsse
 }
 
 atlantis::Result<EnvironmentAssetData, EnvironmentLoadError> loadPreviewStudioEnvironment(
-    const std::filesystem::path& artifactPath, const std::filesystem::path& metadataPath) {
+    const std::filesystem::path& artifactPath, const std::filesystem::path& metadataPath,
+    std::optional<AssetGuid> expectedGuid) {
   using R = atlantis::Result<EnvironmentAssetData, EnvironmentLoadError>;
   constexpr auto maxArtifactBytes = [] {
     std::size_t bytes = kEnvironmentArtifactHeaderSizeBytes + kEnvironmentShPayloadSizeBytes +
@@ -83,7 +86,7 @@ atlantis::Result<EnvironmentAssetData, EnvironmentLoadError> loadPreviewStudioEn
   std::string metadata;
   if (detail::readPreviewFile(metadataPath, 64u * 1024u, metadata))
     return R::Err(EnvironmentLoadError::MetadataFileUnreadable);
-  auto decoded = decodeEnvironment(artifact, metadata);
+  auto decoded = decodeEnvironment(artifact, metadata, expectedGuid);
   if (decoded.isErr()) return decoded;
   const auto& data = decoded.value();
   if (data.faceSize != kCookedEnvironmentFaceSize || data.mipCount != kCookedEnvironmentMipCount ||

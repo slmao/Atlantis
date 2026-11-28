@@ -73,7 +73,8 @@ atlantis::Result<ValidatedSceneData, SceneArtifactDecodeError> decodeScene(const
   if (metadataResult.isErr()) return ResultT::Err(SceneArtifactDecodeError::MetadataParseFailed);
   const SceneMetadata& metadata = metadataResult.value();
 
-  if (metadata.schemaVersion != kSceneArtifactSchemaVersion ||
+  const auto schema = decodedArtifact.environment ? kSceneEnvironmentArtifactSchemaVersion : kSceneArtifactSchemaVersion;
+  if (metadata.schemaVersion != schema ||
       metadata.nodeCount != decodedArtifact.nodes.size()) {
     return ResultT::Err(SceneArtifactDecodeError::MetadataArtifactMismatch);
   }
@@ -83,7 +84,8 @@ atlantis::Result<ValidatedSceneData, SceneArtifactDecodeError> decodeScene(const
   // to do so (the file overload reaches it through this one), reachable
   // only now that every check above has passed.
   return ResultT::Ok(ValidatedSceneData(std::move(decodedArtifact.nodes), std::move(decodedArtifact.parents),
-                                         decodedArtifact.activeCameraIndex, std::move(decodedArtifact.entityGuids)));
+                                         decodedArtifact.activeCameraIndex, std::move(decodedArtifact.entityGuids),
+                                         decodedArtifact.environment));
 }
 
 }  // namespace atlantis::asset_system

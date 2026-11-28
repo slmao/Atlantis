@@ -35,6 +35,7 @@ namespace atlantis::asset_system {
 // record offset 152. Versions 1-6 are all rejected outright, no
 // dual-version reader.
 inline constexpr std::uint32_t kSceneArtifactSchemaVersion = 7;
+inline constexpr std::uint32_t kSceneEnvironmentArtifactSchemaVersion = 8;
 // Plan 0049 P5 (Spec 0049 R5/R6, ruling Q2): the scene semantic version this
 // artifact format projects -- see scene::kSemanticVersion. Independent of
 // the format version above: a layout-only change leaves it alone.
@@ -71,13 +72,15 @@ inline constexpr std::uint32_t kMaxSceneArtifactNodeCount = 65536;
 [[nodiscard]] std::vector<std::byte> encodeSceneArtifact(const std::vector<ValidatedSceneNode>& nodes,
                                                            const std::vector<std::optional<std::size_t>>& parents,
                                                            std::optional<std::size_t> activeCameraIndex,
-                                                           const std::vector<EntityGuid>& entityGuids);
+                                                           const std::vector<EntityGuid>& entityGuids,
+                                                           std::optional<AssetGuid> environment = {});
 
 struct DecodedSceneArtifact {
   std::vector<ValidatedSceneNode> nodes;
   std::vector<std::optional<std::size_t>> parents;
   std::optional<std::size_t> activeCameraIndex;
   std::vector<EntityGuid> entityGuids;  // Plan 0047 P9: one per node, non-nil and unique
+  std::optional<AssetGuid> environment;
 };
 
 // Plan 0015 Section D6, steps 2-7: header decode, EmptyScene and

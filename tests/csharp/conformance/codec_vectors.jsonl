@@ -155,6 +155,9 @@
 {"case":"authoring.error.InvalidGuardedRenderLook","type":"AuthoringError","wire":"InvalidGuardedRenderLook"}
 {"case":"authoring.error.RenderLookStaleDocument","type":"AuthoringError","wire":"RenderLookStaleDocument"}
 {"case":"authoring.error.RenderLookTargetChanged","type":"AuthoringError","wire":"RenderLookTargetChanged"}
+{"case":"authoring.error.InvalidSceneEnvironment","type":"AuthoringError","wire":"InvalidSceneEnvironment"}
+{"case":"authoring.error.SceneEnvironmentStaleDocument","type":"AuthoringError","wire":"SceneEnvironmentStaleDocument"}
+{"case":"authoring.error.SceneEnvironmentUnavailable","type":"AuthoringError","wire":"SceneEnvironmentUnavailable"}
 {"case":"authoring.open_error.SourceUnreadable","type":"OpenError","wire":"SourceUnreadable"}
 {"case":"authoring.open_error.SourceParseFailed","type":"OpenError","wire":"SourceParseFailed"}
 {"case":"authoring.open_error.SourceInvalid","type":"OpenError","wire":"SourceInvalid"}

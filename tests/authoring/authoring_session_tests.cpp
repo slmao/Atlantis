@@ -1536,3 +1536,29 @@ TEST_CASE("authoring: guarded name batches admit 64 distinct writes and reject 6
   CHECK_FALSE(refusalOf(writer, names));
   CHECK(writer.documentState().value()->token.documentRevision == before.documentRevision + 1);
 }
+
+TEST_CASE("scene environment commits one guarded revision and preserves legacy readback", "[authoring][environment]") {
+  Fixture fixture;
+  auto& connection = *fixture.connection;
+  const auto environment = atlantis::asset_system::deriveAssetGuid(sceneGuid(), "environment");
+  fixture.session.setSceneEnvironmentLookup([&](const auto& candidate) { return candidate == environment; });
+  const auto initial = connection.documentStateWithEnvironment().value().value();
+  REQUIRE(initial.environment == ac::SceneEnvironmentChoice{});
+  const ac::SetSceneEnvironment change{initial.token, {environment}};
+  CHECK(refusalOf(connection, {change, change}) == ac::Error::InvalidSceneEnvironment);
+  CHECK(refusalOf(connection, {ac::SetSceneEnvironment{initial.token, {sceneGuid()}}}) ==
+        ac::Error::SceneEnvironmentUnavailable);
+  CHECK(connection.documentStateWithEnvironment().value().value() == initial);
+  CHECK_FALSE(refusalOf(connection, {change}));
+  const auto edited = connection.documentStateWithEnvironment().value().value();
+  CHECK(edited.environment == ac::SceneEnvironmentChoice{environment});
+  CHECK(edited.token.documentRevision == initial.token.documentRevision + 1);
+  CHECK_FALSE(connection.documentState().value()->environment);
+  CHECK(refusalOf(connection, {change}) == ac::Error::SceneEnvironmentStaleDocument);
+  CHECK_FALSE(refusalOf(connection, {ac::SetSceneEnvironment{edited.token, {environment}}}));
+  CHECK(connection.documentStateWithEnvironment().value().value() == edited);
+  REQUIRE(connection.saveIfCurrent(edited.token).isOk());
+  CHECK(readText(fixture.source).find("environment: " + atlantis::asset_system::toString(environment)) != std::string::npos);
+  CHECK(connection.reopenIfCurrent(edited.token).isOk());
+  CHECK(connection.documentStateWithEnvironment().value()->environment == ac::SceneEnvironmentChoice{environment});
+}

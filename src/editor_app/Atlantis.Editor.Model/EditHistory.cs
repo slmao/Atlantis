@@ -98,6 +98,7 @@ public enum HistoryResult
 public enum BatchReplayState { Committed, Retry, Drop }
 
 public sealed record PrefabHistory(EntityGuid Root, PrefabSubtree Before, PrefabSubtree After) : EditEntry;
+public sealed record SceneEnvironmentEdit(EntityGuid Document, SceneEnvironmentChoice Before, SceneEnvironmentChoice After) : EditEntry;
 
 public sealed record BatchReplayResult(BatchReplayState State, string Notice);
 
@@ -180,16 +181,18 @@ public sealed class EditHistory
         Func<GuardedDuplicateEdit, bool, BatchReplayResult>? duplicate = null,
         Func<NodeLife, bool, BatchReplayResult>? preset = null,
         Func<PrefabHistory, bool, BatchReplayResult>? prefab = null,
-        Func<BatchRenameEdit, bool, BatchReplayResult>? rename = null) =>
-        Take(_undo, Step.Undo, swap, batch, duplicate, preset, prefab, rename);
+        Func<BatchRenameEdit, bool, BatchReplayResult>? rename = null,
+        Func<SceneEnvironmentEdit, bool, BatchReplayResult>? environment = null) =>
+        Take(_undo, Step.Undo, swap, batch, duplicate, preset, prefab, rename, environment);
 
     public HistoryResult Redo(Func<SiblingEditEntry, bool, (bool Verified, string Notice)>? swap = null,
         Func<BatchPropertyEdit, bool, BatchReplayResult>? batch = null,
         Func<GuardedDuplicateEdit, bool, BatchReplayResult>? duplicate = null,
         Func<NodeLife, bool, BatchReplayResult>? preset = null,
         Func<PrefabHistory, bool, BatchReplayResult>? prefab = null,
-        Func<BatchRenameEdit, bool, BatchReplayResult>? rename = null) =>
-        Take(_redo, Step.Redo, swap, batch, duplicate, preset, prefab, rename);
+        Func<BatchRenameEdit, bool, BatchReplayResult>? rename = null,
+        Func<SceneEnvironmentEdit, bool, BatchReplayResult>? environment = null) =>
+        Take(_redo, Step.Redo, swap, batch, duplicate, preset, prefab, rename, environment);
 
     /// <summary>Once per editor tick: updates the target, settles pending transactions, applies invalidations.</summary>
     public void Update()
@@ -245,7 +248,8 @@ public sealed class EditHistory
         Func<GuardedDuplicateEdit, bool, BatchReplayResult>? duplicate,
         Func<NodeLife, bool, BatchReplayResult>? preset,
         Func<PrefabHistory, bool, BatchReplayResult>? prefab,
-        Func<BatchRenameEdit, bool, BatchReplayResult>? rename)
+        Func<BatchRenameEdit, bool, BatchReplayResult>? rename,
+        Func<SceneEnvironmentEdit, bool, BatchReplayResult>? environment)
     {
         if (Waiting)
         {
@@ -266,6 +270,8 @@ public sealed class EditHistory
             return HistoryResult.Submitted;
         }
         BatchReplayResult? guarded = null;
+        if (edit.Structure is [SceneEnvironmentEdit choice])
+            guarded = (environment ?? throw new InvalidOperationException("Environment replay requires guarded settlement."))(choice, forward);
         if (edit.Structure is [BatchRenameEdit names])
             guarded = (rename ?? throw new InvalidOperationException("Name replay requires guarded settlement."))(names, forward);
         if (edit.Structure is [PrefabHistory instance])

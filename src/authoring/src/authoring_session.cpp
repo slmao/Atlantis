@@ -229,6 +229,7 @@ struct AuthoringSession::State {
   PrefabDigest prefabDigest;
   PrefabAssets prefabAssets;
   PrefabLookup prefabLookup;
+  SceneEnvironmentLookup sceneEnvironmentLookup;
   RecoveryStore* recovery = nullptr;
   std::optional<std::string> recoveryBase;
   std::uint64_t documentRevision = 0;
@@ -258,13 +259,18 @@ struct AuthoringSession::State {
     if (!view.request) return Result<ac::ApplySnapshot, ac::ApplyLookupError>::Err(ac::ApplyLookupError::UnknownApply);
     return Result<ac::ApplySnapshot, ac::ApplyLookupError>::Ok(std::move(view));
   }
-  void reportReload(ac::ApplyId id, Result<std::uint64_t, ac::ReloadError> result) {
+  void reportReload(ac::ApplyId id, Result<std::uint64_t, ac::ReloadError> result,
+                    std::optional<ac::SceneEnvironmentApplyDetail> environmentDetail) {
     if (!pendingApply || pendingApply->receipt.id != id) return;
     auto record = std::move(*pendingApply); pendingApply.reset();
     if (result.isOk()) {
       record.state = ac::ApplyState::Applied; record.generation = result.value();
       projection = ac::ApplyProjection{record.receipt, result.value()};
-    } else { record.state = ac::ApplyState::Failed; record.error = result.error(); }
+    } else {
+      record.state = ac::ApplyState::Failed;
+      record.error = result.error();
+      record.environmentDetail = environmentDetail;
+    }
     retain(std::move(record));
     if (result.isOk()) publish({ac::Applied{result.value()}});
   }
@@ -351,6 +357,12 @@ struct AuthoringSession::State {
     if (!node) return ac::Error::UnknownNode;
     d.nodes[*node].parent = c.parent;
     events.push_back(ac::ParentChanged{c.node, c.parent});
+    return std::nullopt;
+  }
+
+  std::optional<ac::Error> apply(scene::AuthoringScene& d, const ac::SetSceneEnvironment& c,
+                                 std::vector<ac::Event>&) {
+    d.environment = c.choice.asset;
     return std::nullopt;
   }
 
@@ -634,6 +646,20 @@ struct AuthoringSession::State {
   [[nodiscard]] std::optional<ac::CommandFailure> transact(const std::vector<ac::Command>& commands,
                                                            CommandTicket first) {
     if (!document.has_value()) return ac::CommandFailure{first, ac::Error::NoDocument};
+    for (std::size_t i = 0; i < commands.size(); ++i) {
+      const auto* environment = std::get_if<ac::SetSceneEnvironment>(&commands[i]);
+      if (!environment) continue;
+      const CommandTicket ticket{first.value + i};
+      if (commands.size() != 1 || !sceneEnvironmentLookup ||
+          !std::holds_alternative<HandAuthored>(source.provenance))
+        return ac::CommandFailure{ticket, ac::Error::InvalidSceneEnvironment};
+      if (environment->expectedDocument != ac::DocumentToken{documentId, documentRevision})
+        return ac::CommandFailure{ticket, ac::Error::SceneEnvironmentStaleDocument};
+      if (environment->choice.asset &&
+          (*environment->choice.asset == AssetGuid{} || !sceneEnvironmentLookup(*environment->choice.asset)))
+        return ac::CommandFailure{ticket, ac::Error::SceneEnvironmentUnavailable};
+      if (environment->choice.asset == document->environment) return std::nullopt;
+    }
     const auto lookGuard = std::ranges::find_if(commands, [](const auto& command) {
       return std::holds_alternative<ac::RequireRenderLookDocument>(command);
     });
@@ -814,13 +840,14 @@ struct AuthoringSession::State {
     return asset_system::serializeSceneSource(parsed.value());
   }
 
-  [[nodiscard]] std::optional<ac::DocumentState> documentState() const {
+  [[nodiscard]] std::optional<ac::DocumentState> documentState(bool withEnvironment = false) const {
     if (!document) return std::nullopt;
     if (!dirty) dirty = canonicalSource() != persistedSource;
     return ac::DocumentState{{documentId, documentRevision}, source.scene,
         sourcePathOf(source.provenance).generic_string(),
         std::holds_alternative<HandAuthored>(source.provenance) ? ac::Provenance::HandAuthored : ac::Provenance::Imported,
-        persistedRevision, *dirty};
+        persistedRevision, *dirty, withEnvironment && sceneEnvironmentLookup
+            ? std::optional{ac::SceneEnvironmentChoice{document->environment}} : std::nullopt};
   }
 
   void captureRecovery() {
@@ -1064,6 +1091,11 @@ class InProcessAuthoringConnection final : public connection::AuthoringConnectio
   atlantis::Result<std::monostate, ac::SaveError> save() override { return state_.save(); }
   Result<std::optional<ac::DocumentState>, ac::DocumentFailure> documentState() const override {
     return Result<std::optional<ac::DocumentState>, ac::DocumentFailure>::Ok(state_.documentState());
+  }
+  Result<std::optional<ac::DocumentState>, ac::DocumentFailure> documentStateWithEnvironment() const override {
+    using R = Result<std::optional<ac::DocumentState>, ac::DocumentFailure>;
+    if (!state_.sceneEnvironmentLookup) return R::Err({ac::DocumentError::Unsupported});
+    return R::Ok(state_.documentState(true));
   }
   Result<ac::DocumentState, ac::DocumentFailure> saveIfCurrent(const ac::DocumentToken& expected) override {
     using R = Result<ac::DocumentState, ac::DocumentFailure>;
@@ -1394,10 +1426,14 @@ void AuthoringSession::setPrefabSync(PrefabRead read, PrefabDigest digest, Prefa
 }
 void AuthoringSession::setPrefabUpdateSink(PrefabUpdateSink sink) { state_->prefabUpdateSink = std::move(sink); }
 void AuthoringSession::setPrefabLookup(PrefabLookup lookup) { state_->prefabLookup = std::move(lookup); }
+void AuthoringSession::setSceneEnvironmentLookup(SceneEnvironmentLookup lookup) {
+  state_->sceneEnvironmentLookup = std::move(lookup);
+}
 
 void AuthoringSession::reportApplied(std::uint64_t generation) { state_->publish({ac::Applied{generation}}); }
-void AuthoringSession::reportReload(ac::ApplyId id, Result<std::uint64_t, ac::ReloadError> result) {
-  state_->reportReload(id, std::move(result));
+void AuthoringSession::reportReload(ac::ApplyId id, Result<std::uint64_t, ac::ReloadError> result,
+                                    std::optional<ac::SceneEnvironmentApplyDetail> environmentDetail) {
+  state_->reportReload(id, std::move(result), environmentDetail);
 }
 
 }  // namespace atlantis::authoring

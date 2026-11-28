@@ -233,7 +233,7 @@ void authoringVectors(std::vector<Vector>& out) {
   out.push_back({"authoring.node.named", "NodeSummary", codec::encode(ac::NodeSummary{kNode, kParent, "  \xe5\x90\x8d \"quoted\" \\ "})});
 
   // The refusal set: every name of every error set, in declaration order.
-  for (int e = 0; e <= static_cast<int>(ac::Error::RenderLookTargetChanged); ++e) {
+  for (int e = 0; e <= static_cast<int>(ac::Error::SceneEnvironmentUnavailable); ++e) {
     const auto error = static_cast<ac::Error>(e);
     out.push_back(
         {"authoring.error." + std::string(ac::toString(error)), "AuthoringError", codec::encodeAuthoringError(error)});

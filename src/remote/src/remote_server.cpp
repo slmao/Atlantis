@@ -226,8 +226,11 @@ namespace ac = atlantis::connection::authoring;
     return Outcome::Ok(inBand(authoring.open(), &encodeNull, &codec::encodeOpenError));
   }
   if (method == "authoring.documentState") {
-    if (!p.isObject() || !p.asObject().empty()) return bad("expected empty parameters");
-    const auto state = authoring.documentState();
+    if (!p.isObject()) return bad("expected document state parameters");
+    const auto* withEnvironment = p.find("withEnvironment");
+    if ((withEnvironment && (!withEnvironment->isBool() || !withEnvironment->asBool() || p.asObject().size() != 1)) ||
+        (!withEnvironment && !p.asObject().empty())) return bad("expected empty parameters or withEnvironment");
+    const auto state = withEnvironment ? authoring.documentStateWithEnvironment() : authoring.documentState();
     if (state.isErr()) return Outcome::Err("unknown method " + std::string(method));
     Value reply = Value::object();
     reply.set("ok", state.value() ? codec::encode(*state.value()) : Value());

@@ -10,6 +10,7 @@
 #include <atlantis/rhi/device.h>
 #include <atlantis/rhi/types.h>
 #include <atlantis/runtime/bootstrap_config.h>
+#include <atlantis/asset_system/asset_catalog.h>
 #include <atlantis/runtime/init_error.h>
 #include <atlantis/world/scene_instantiation.h>
 #include <atlantis/world/world.h>
@@ -93,7 +94,11 @@ struct SceneLoadOutcome {
 // Q1 B2): catalog -> decode -> dependency load -> bakeScene().
 [[nodiscard]] atlantis::Result<SceneLoadOutcome, RuntimeInitError> loadAndBakeScene(
     const BootstrapConfig& config, atlantis::rhi::Device* device,
-    const atlantis::rhi::VertexInputLayout& vertexInputLayout);
+    const atlantis::rhi::VertexInputLayout& vertexInputLayout,
+    const asset_system::AssetCatalog* catalog = nullptr,
+    std::optional<asset_system::ValidatedSceneData> decoded = {});
+[[nodiscard]] Result<asset_system::ValidatedSceneData, RuntimeInitError> decodeCatalogScene(
+    const asset_system::AssetCatalog& catalog, const asset_system::AssetGuid& scene);
 
 // Plan 0065 P4 (ADR-0131 D4): what a running Runtime has loaded, which a
 // reload reuses instead of loading again.

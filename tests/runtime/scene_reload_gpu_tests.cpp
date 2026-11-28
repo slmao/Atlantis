@@ -430,7 +430,8 @@ struct AuthoringHost {
     for (int i = 0; i < count; ++i) {
       REQUIRE(app.shouldContinue());
       app.runFrame();
-      if (auto outcome = app.takeSceneReloadResult()) session.reportReload(outcome->first, std::move(outcome->second));
+      if (auto outcome = app.takeSceneReloadResult())
+        session.reportReload(outcome->first, std::move(outcome->second), outcome->environmentDetail);
       generation = app.sceneGeneration();
     }
     REQUIRE(app.shouldContinue());
@@ -880,4 +881,37 @@ TEST_CASE("J3: apply on Bistro's generated document", "[.j3][runtime][gpu][reloa
   }
   REQUIRE(app.shutdown() == RuntimeExitReason::Success);
 #endif
+}
+
+TEST_CASE("scene environment requires Build/Open across the IBL pipeline boundary",
+          "[runtime][gpu][reload][scene-environment]") {
+  auto config = buildSmokeConfig();
+  config.environmentArtifactPath.clear();
+  config.environmentMetadataPath.clear();
+  auto started = createRuntimeApplication(config);
+  REQUIRE(started.isOk());
+  auto app = std::move(started.value());
+  {
+    AuthoringHost host(app, committedScene("integrated_showcase_demo"), defaultScene());
+    host.frames(2);
+    CHECK_FALSE(app.sceneEnvironment().enabled);
+    const auto studio = as::parseAssetGuid("13c5a739-0f5b-4949-ae9e-5e9ae0412375").value();
+    host.session.setSceneEnvironmentLookup([&](const auto& asset) { return app.hasSceneEnvironment(asset); });
+    const auto original = host.connection->documentStateWithEnvironment().value().value();
+    (void)host.connection->submitTransaction({ac::SetSceneEnvironment{original.token, {studio}}});
+    REQUIRE(host.connection->drainFailures().empty());
+    const auto receipt = host.connection->applyTracked();
+    REQUIRE(receipt.isOk());
+    host.frames(2);
+    const auto status = host.connection->applyStatus(receipt.value().id).value();
+    REQUIRE(status.request);
+    CHECK(status.request->state == ac::ApplyState::Failed);
+    CHECK(status.request->error == ac::ReloadError::RenderPreparationFailed);
+    CHECK(status.request->environmentDetail ==
+          ac::SceneEnvironmentApplyDetail{{studio}, ac::SceneEnvironmentFailure::BuildOpenRequired});
+    CHECK_FALSE(app.sceneEnvironment().enabled);
+    CHECK(app.sceneGeneration() == 0);
+    CHECK(host.connection->documentStateWithEnvironment().value()->environment == ac::SceneEnvironmentChoice{studio});
+  }
+  REQUIRE(app.shutdown() == RuntimeExitReason::Success);
 }

@@ -1495,12 +1495,21 @@ class RemoteAuthoring final : public atlantis::connection::AuthoringConnection {
                                       ResultT::Err(ac::SaveError::NoDocument));
   }
   Result<std::optional<ac::DocumentState>, ac::DocumentFailure> documentState() const override {
+    return readDocumentState(false);
+  }
+  Result<std::optional<ac::DocumentState>, ac::DocumentFailure> documentStateWithEnvironment() const override {
+    return readDocumentState(true);
+  }
+  Result<std::optional<ac::DocumentState>, ac::DocumentFailure> readDocumentState(bool withEnvironment) const {
     using R = Result<std::optional<ac::DocumentState>, ac::DocumentFailure>;
-    const auto response = documentCall("authoring.documentState", Value::object(), false);
+    auto params = Value::object();
+    if (withEnvironment) params.set("withEnvironment", Value::boolean(true));
+    const auto response = documentCall("authoring.documentState", std::move(params), false);
     if (response.isErr()) return R::Err(response.error());
     const auto* ok = response.value().find("ok");
     if (ok && ok->isNull()) return R::Ok(std::nullopt);
-    if (ok) if (auto view = codec::decodeDocumentState(*ok)) return R::Ok(std::move(view));
+    if (ok) if (auto view = codec::decodeDocumentState(*ok); view && withEnvironment == view->environment.has_value())
+      return R::Ok(std::move(view));
     return failed(R::Err({ac::DocumentError::ProtocolFailure}));
   }
   Result<ac::DocumentState, ac::DocumentFailure> saveIfCurrent(const ac::DocumentToken& token) override {

@@ -312,7 +312,7 @@ internal sealed record LocatedMaterialBinding(MaterialBindingPickRequest Request
     AssetGuid Scene, DocumentToken Document, ApplyId Apply, long Lifetime, long Camera, ulong Extent, long Observation,
     BatchPropertyTarget Target, string Name, IReadOnlyList<string> KnownUses, bool Complete);
 
-public sealed class EditorWorker : IDisposable
+public sealed partial class EditorWorker : IDisposable
 {
     private DocumentObservation _persistence = new(DocumentAvailability.Starting);
     private long _persistenceRead;
@@ -4349,7 +4349,7 @@ public sealed class EditorWorker : IDisposable
             // No new Apply was sent by the revision check.
         }
         if (lifetime == MeshDocumentLifetime)
-            apply.RequireExplicitApply("the creation or replay revision is no longer verified");
+            apply.RequireExplicitApply("the committed edit revision is no longer verified");
         return notice + " Verify and Apply the current document explicitly.";
     }
 
@@ -5144,8 +5144,16 @@ public sealed class EditorWorker : IDisposable
                 return new(BatchReplayState.Retry, error.Message);
             }
         }
-        HistoryResult result = undo ? _history.Undo(Replay, ReplayBatch, ReplayDuplicate, ReplayPreset, ReplayPrefab, ReplayNames) :
-            _history.Redo(Replay, ReplayBatch, ReplayDuplicate, ReplayPreset, ReplayPrefab, ReplayNames);
+        BatchReplayResult ReplayEnvironment(SceneEnvironmentEdit edit, bool forward)
+        {
+            batchReplay = true;
+            var result = SettleSceneEnvironment(session, edit, forward, lifetime);
+            if (result.Revision.HasValue) presetApplyRevision = result.Revision;
+            return result.Settlement;
+        }
+        HistoryResult result = undo
+            ? _history.Undo(Replay, ReplayBatch, ReplayDuplicate, ReplayPreset, ReplayPrefab, ReplayNames, ReplayEnvironment)
+            : _history.Redo(Replay, ReplayBatch, ReplayDuplicate, ReplayPreset, ReplayPrefab, ReplayNames, ReplayEnvironment);
         siblingReplay |= batchReplay;
         _history.Update();
         _log.Write(string.Format(CultureInfo.InvariantCulture, "history {0}: {1} ({2}) in {3:F1} ms", undo ? "undo" : "redo", result,

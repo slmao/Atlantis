@@ -274,8 +274,13 @@ class RuntimeApplication {
   // Owns the scene, not the document. Frame thread only; no reentrant callback.
   [[nodiscard]] Result<std::optional<connection::authoring::ApplyId>, std::monostate> requestSceneReload(
       connection::authoring::ApplyId id, atlantis::asset_system::ValidatedSceneData scene);
-  using ReloadResult = std::pair<connection::authoring::ApplyId,
-                                Result<std::uint64_t, connection::authoring::ReloadError>>;
+  struct ReloadResult {
+    connection::authoring::ApplyId first;
+    Result<std::uint64_t, connection::authoring::ReloadError> second;
+    std::optional<connection::authoring::SceneEnvironmentApplyDetail> environmentDetail{};
+  };
+  [[nodiscard]] connection::EffectiveSceneEnvironment sceneEnvironment() const noexcept;
+  [[nodiscard]] bool hasSceneEnvironment(const asset_system::AssetGuid& asset) const;
   // Consumed by the executable host after each frame, before the next request batch.
   [[nodiscard]] std::optional<ReloadResult> takeSceneReloadResult();
   // Orderly composition-root stop, not a client cancellation operation. Refuses
@@ -400,6 +405,14 @@ class RuntimeApplication {
   // resources through the terminal shutdown drain, before Device teardown.
   std::shared_ptr<detail::MeshPreviewResources> incompleteMeshPreview_;
   std::shared_ptr<detail::RenderLookResources> incompleteRenderLook_;
+  struct EnvironmentUpload {
+    EnvironmentLightingCandidate candidate;
+    std::unique_ptr<rhi::OffscreenTarget> target;
+    std::unique_ptr<rhi::RenderTarget> attachment;
+  };
+  [[nodiscard]] Result<EnvironmentLightingResources, connection::authoring::ReloadError>
+  uploadSceneEnvironment(const asset_system::EnvironmentAssetData& data);
+  std::optional<EnvironmentUpload> incompleteEnvironmentUpload_;
   std::unique_ptr<atlantis::rhi::Presentation> presentation_;  // lazy: constructed on first SurfaceCreated
   // Plan 0025/M7: declared before borrowing Materials so reverse destruction
   // releases all Materials first, then environment resources, then Device.
@@ -603,6 +616,9 @@ class RuntimeApplication {
   // CPU payload exists only until first-frame realization has submitted and
   // waitIdle() has succeeded. Empty also represents no configured environment.
   std::optional<atlantis::asset_system::EnvironmentAssetData> environmentData_;
+  std::optional<SceneEnvironmentSource> startupEnvironment_;
+  std::optional<SceneEnvironmentSource> activeEnvironment_;
+  std::shared_ptr<const asset_system::AssetCatalog> sceneEnvironmentCatalog_;
 
   atlantis::renderer::Renderer renderer_;  // stateless, default-constructed
   // Spec 0051 / ADR-0102 (Plan 0051 P4): the loaded scene's bake output --

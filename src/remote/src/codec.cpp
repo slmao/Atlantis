@@ -1084,6 +1084,21 @@ std::optional<connection::ControlError> decodeControlError(const Value& value) {
   return std::nullopt;
 }
 
+namespace {
+
+Value encodeEnvironmentChoice(const authoring::SceneEnvironmentChoice& choice) {
+  return choice.asset ? encodeAsset(*choice.asset) : Value();
+}
+
+std::optional<authoring::SceneEnvironmentChoice> decodeEnvironmentChoice(const Value& value) {
+  if (value.isNull()) return authoring::SceneEnvironmentChoice{};
+  const auto asset = decodeAsset(value);
+  if (!asset || *asset == AssetGuid{}) return std::nullopt;
+  return authoring::SceneEnvironmentChoice{*asset};
+}
+
+}  // namespace
+
 Value encode(const connection::RuntimeStatus& status) {
   Value out = Value::object();
   out.set("paused", Value::boolean(status.paused));
@@ -1095,6 +1110,12 @@ Value encode(const connection::RuntimeStatus& status) {
   if (status.supportsMaterialDiagnosticCapture) out.set("supportsMaterialDiagnosticCapture", Value::boolean(true));
   if (status.supportsDirectionalShadowDiagnosticCapture)
     out.set("supportsDirectionalShadowDiagnosticCapture", Value::boolean(true));
+  if (status.sceneEnvironment) {
+    auto environment = Value::object();
+    environment.set("enabled", Value::boolean(status.sceneEnvironment->enabled));
+    environment.set("asset", encodeEnvironmentChoice({status.sceneEnvironment->asset}));
+    out.set("sceneEnvironment", std::move(environment));
+  }
   return out;
 }
 
@@ -1117,11 +1138,20 @@ std::optional<connection::RuntimeStatus> decodeStatus(const Value& value) {
   const auto* extent = value.find("supportsRenderLookCaptureExtent");
   const auto* diagnostic = value.find("supportsMaterialDiagnosticCapture");
   const auto* shadow = value.find("supportsDirectionalShadowDiagnosticCapture");
+  std::optional<connection::EffectiveSceneEnvironment> environment;
+  if (const auto* field = value.find("sceneEnvironment")) {
+    const auto* enabled = field->find("enabled");
+    const auto* asset = field->find("asset");
+    const auto choice = asset ? decodeEnvironmentChoice(*asset) : std::nullopt;
+    if (!field->isObject() || field->asObject().size() != 2 || !enabled || !enabled->isBool() ||
+        !choice || (!enabled->asBool() && choice->asset)) return std::nullopt;
+    environment = connection::EffectiveSceneEnvironment{enabled->asBool(), choice->asset};
+  }
   return connection::RuntimeStatus{paused->asBool(), *f, *s, generation,
                                    renderLook && renderLook->isBool() && renderLook->asBool(),
                                    extent && extent->isBool() && extent->asBool(),
                                    diagnostic && diagnostic->isBool() && diagnostic->asBool(),
-                                   shadow && shadow->isBool() && shadow->asBool()};
+                                   shadow && shadow->isBool() && shadow->asBool(), environment};
 }
 
 namespace {
@@ -2226,6 +2256,8 @@ constexpr std::array kAuthoringErrors = {
     authoring::Error::InvalidGuardedPropertyBatch, authoring::Error::PropertyBatchStaleRevision,
     authoring::Error::InvalidGuardedDuplicateBatch, authoring::Error::DuplicateBatchStaleRevision,
     authoring::Error::InvalidGuardedNameBatch, authoring::Error::NameBatchStaleDocument,
+    authoring::Error::InvalidSceneEnvironment, authoring::Error::SceneEnvironmentStaleDocument,
+    authoring::Error::SceneEnvironmentUnavailable,
     authoring::Error::InvalidGuardedRenderLook, authoring::Error::RenderLookStaleDocument,
     authoring::Error::RenderLookTargetChanged,
 };
@@ -2409,6 +2441,10 @@ Value encode(const authoring::Command& command) {
         } else if constexpr (std::is_same_v<C, authoring::RequireDocumentRevision>) {
           out.set("kind", Value::string("RequireDocumentRevision"));
           out.set("expectedRevision", Value::number(c.expectedRevision));
+        } else if constexpr (std::is_same_v<C, authoring::SetSceneEnvironment>) {
+          out.set("kind", Value::string("SetSceneEnvironment"));
+          out.set("expectedDocument", encode(c.expectedDocument));
+          out.set("environment", encodeEnvironmentChoice(c.choice));
         } else {
           static_assert(std::is_same_v<C, authoring::SetActiveCamera>);
           out.set("kind", Value::string("SetActiveCamera"));
@@ -2547,6 +2583,15 @@ std::optional<authoring::Command> decodeAuthoringCommand(const Value& value) {
     const auto expected = revision ? decodeUInt64(*revision) : std::nullopt;
     if (!expected) return std::nullopt;
     return authoring::Command(authoring::RequireDocumentRevision{*expected});
+  }
+  if (*kind == "SetSceneEnvironment") {
+    const auto* token = value.find("expectedDocument");
+    const auto* environment = value.find("environment");
+    const auto expected = token ? decodeDocumentToken(*token) : std::nullopt;
+    const auto choice = environment ? decodeEnvironmentChoice(*environment) : std::nullopt;
+    if (value.asObject().size() != 3 || !expected || token->asObject().size() != 2 || !choice)
+      return std::nullopt;
+    return authoring::Command(authoring::SetSceneEnvironment{*expected, *choice});
   }
   if (*kind == "SetActiveCamera") {
     const auto camera = optionalEntityMember(value, "camera");
@@ -2848,11 +2893,15 @@ Value encode(const authoring::DocumentState& state) {
   out.set("provenance", Value::string(state.provenance == authoring::Provenance::Imported ? "Imported" : "HandAuthored"));
   out.set("lastPersistedRevision", Value::number(state.lastPersistedRevision));
   out.set("dirty", Value::boolean(state.dirty));
+  if (state.environment) out.set("environment", encodeEnvironmentChoice(*state.environment));
   return out;
 }
 
 std::optional<authoring::DocumentState> decodeDocumentState(const Value& value) {
-  if (!value.isObject() || value.asObject().size() != 7) return std::nullopt;
+  const auto* environment = value.find("environment");
+  if (!value.isObject() || value.asObject().size() != (environment ? 8u : 7u)) return std::nullopt;
+  const auto choice = environment ? decodeEnvironmentChoice(*environment) : std::nullopt;
+  if (environment && !choice) return std::nullopt;
   const auto token = decodeDocumentToken(value);
   const auto* scene = value.find("scene");
   const auto* source = value.find("source");
@@ -2869,7 +2918,8 @@ std::optional<authoring::DocumentState> decodeDocumentState(const Value& value) 
   const auto type = provenance->asString();
   if (type != "Imported" && type != "HandAuthored") return std::nullopt;
   return authoring::DocumentState{*token, *guid, source->asString(),
-      type == "Imported" ? authoring::Provenance::Imported : authoring::Provenance::HandAuthored, *revision, dirty->asBool()};
+      type == "Imported" ? authoring::Provenance::Imported : authoring::Provenance::HandAuthored, *revision,
+      dirty->asBool(), choice};
 }
 
 std::optional<authoring::DocumentError> decodeDocumentError(const Value& value, bool saving) {
@@ -3227,6 +3277,12 @@ Value encode(const authoring::ApplyRecord& record) {
   out.set("state", Value::string(std::string(authoring::toString(record.state))));
   if (record.generation) out.set("generation", Value::number(*record.generation));
   if (record.error) out.set("error", Value::string(std::string(authoring::toString(*record.error))));
+  if (record.environmentDetail) {
+    auto detail = Value::object();
+    detail.set("requested", encodeEnvironmentChoice(record.environmentDetail->requested));
+    detail.set("reason", Value::string(std::string(authoring::toString(record.environmentDetail->failure))));
+    out.set("environmentDetail", std::move(detail));
+  }
   if (record.supersededBy) out.set("supersededBy", Value::string(authoring::toString(*record.supersededBy)));
   return out;
 }
@@ -3254,6 +3310,17 @@ std::optional<authoring::ApplyRecord> decodeApplyRecord(const Value& value) {
     const auto id = authoring::parseApplyId(by->asString());
     if (id.isErr() || id.value() == out.receipt.id) return std::nullopt;
     out.supersededBy = id.value();
+  }
+  if (const auto* detail = value.find("environmentDetail")) {
+    const auto* requested = detail->find("requested");
+    const auto* reason = detail->find("reason");
+    const auto choice = requested ? decodeEnvironmentChoice(*requested) : std::nullopt;
+    const auto failure = reason ? enumeratorNamed(*reason, std::array{authoring::SceneEnvironmentFailure::Unavailable,
+        authoring::SceneEnvironmentFailure::BuildOpenRequired, authoring::SceneEnvironmentFailure::PreparationFailed})
+        : std::nullopt;
+    if (*named != authoring::ApplyState::Failed || !detail->isObject() || detail->asObject().size() != 2 ||
+        !choice || !failure) return std::nullopt;
+    out.environmentDetail = authoring::SceneEnvironmentApplyDetail{*choice, *failure};
   }
   return out;
 }

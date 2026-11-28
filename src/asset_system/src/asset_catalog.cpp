@@ -192,7 +192,8 @@ constexpr std::array<std::string_view, kFieldCount> kFieldKeys = {
 [[nodiscard]] bool dependencyAllowed(CatalogAssetType owner, CatalogAssetType dependency) noexcept {
   switch (owner) {
     case CatalogAssetType::Scene:
-      return dependency == CatalogAssetType::Mesh || dependency == CatalogAssetType::Material;
+      return dependency == CatalogAssetType::Mesh || dependency == CatalogAssetType::Material ||
+             dependency == CatalogAssetType::Environment;
     case CatalogAssetType::Material:
       return dependency == CatalogAssetType::Texture;
     case CatalogAssetType::Mesh:

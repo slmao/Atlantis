@@ -177,6 +177,7 @@ enum class SceneArtifactDecodeError {
   // contracts, checked after the preceding artifact validations.
   ConflictingComponents,
   ZeroAssetReference,
+  InvalidEnvironmentGuid,
 };
 
 // Plan 0016 Section D8: cookTexture()'s own validation conditions --

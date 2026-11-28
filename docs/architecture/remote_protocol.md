@@ -1253,3 +1253,25 @@ InvalidArtifact. CatalogUnavailable is a whole-request refusal. A malformed
 request is BadRequest. Older hosts refuse the new method as Unsupported
 through the clients' existing unknown-method mapping. The bounded reply
 contains no paths, scene edits, frame samples or capture requests.
+
+### Scene environment (Spec 0150 / ADR-0196)
+
+A supporting `control.status` includes `sceneEnvironment: {"enabled":bool,
+"asset":<AssetGuid>|null}` for its settled scene generation. Enabled with null
+asset means a configured startup environment without catalog identity. Disabled
+always has a null asset. Absence is an older host.
+
+`authoring.documentState` accepts the exact opt-in `{"withEnvironment":true}`,
+adding `environment: <AssetGuid>|null` to a non-null document. Null is
+Inherit. Empty parameters, save, reopen and recovery continue to return their
+legacy document shapes. For a supported hand-authored document, submit
+`{"kind":"SetSceneEnvironment","expectedDocument":<DocumentToken>,
+"environment":<AssetGuid>|null}` as a sole `authoring.submitTransaction`
+command. Drain failures under the ticket. Stale tokens, mixed commands and
+unavailable environments are refused without a document write. An unchanged
+choice leaves the revision unchanged. Save and Apply have their own receipts.
+
+A failed tracked Apply can additionally include `environmentDetail:
+{"requested":<AssetGuid>|null,"reason":"Unavailable"|"PreparationFailed"|
+"BuildOpenRequired"}`. Its legacy error category and the previous projection
+are preserved. Check the document and exact Apply receipt after a transport loss.

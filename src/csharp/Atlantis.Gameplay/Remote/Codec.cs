@@ -530,6 +530,9 @@ public static partial class Codec
         if (status.SupportsDirectionalShadowDiagnosticCapture)
             value.Set("supportsDirectionalShadowDiagnosticCapture", JsonValue.Bool(true));
         if (status.SupportsMaterialDiagnosticCapture) value.Set("supportsMaterialDiagnosticCapture", JsonValue.Bool(true));
+        if (status.SceneEnvironment is { } environment)
+            value.Set("sceneEnvironment", JsonValue.NewObject().Set("enabled", JsonValue.Bool(environment.Enabled))
+                .Set("asset", EncodeEnvironmentChoice(new A.SceneEnvironmentChoice(environment.Asset))));
         return value;
     }
 
@@ -547,12 +550,21 @@ public static partial class Codec
             if (DecodeUInt64(g) is not ulong decoded) return null;
             generation = decoded;
         }
+        EffectiveSceneEnvironment? environment = null;
+        if (value.Find("sceneEnvironment") is { } field)
+        {
+            if (!Exact(field, 2) || field.Find("enabled") is not { IsBool: true } enabled ||
+                field.Find("asset") is not { } asset || DecodeEnvironmentChoice(asset) is not { } choice ||
+                (!enabled.AsBool && choice.Asset.HasValue)) return null;
+            environment = new EffectiveSceneEnvironment(enabled.AsBool, choice.Asset);
+        }
         return new RuntimeStatus(paused.AsBool, f, s, generation)
         {
             SupportsRenderLookCapture = value.Find("supportsRenderLookCapture") is { IsBool: true, AsBool: true },
             SupportsRenderLookCaptureExtent = value.Find("supportsRenderLookCaptureExtent") is { IsBool: true, AsBool: true },
             SupportsDirectionalShadowDiagnosticCapture = value.Find("supportsDirectionalShadowDiagnosticCapture") is { IsBool: true, AsBool: true },
-            SupportsMaterialDiagnosticCapture = value.Find("supportsMaterialDiagnosticCapture") is { IsBool: true, AsBool: true }
+            SupportsMaterialDiagnosticCapture = value.Find("supportsMaterialDiagnosticCapture") is { IsBool: true, AsBool: true },
+            SceneEnvironment = environment
         };
     }
 

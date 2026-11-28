@@ -396,3 +396,35 @@ TEST_CASE("codec: viewport cameras, rays and ray hits round-trip; NoGeometry is 
   CHECK_FALSE(codec::decodeRay(json::Value::object()).has_value());
   CHECK_FALSE(codec::decodeRayHit(json::Value::object()).has_value());
 }
+
+TEST_CASE("remote codec: scene environment extensions preserve the old document shape", "[remote][codec][environment]") {
+  namespace c = atlantis::connection;
+  namespace a = c::authoring;
+  const a::DocumentToken token{entity(7), 2};
+  a::DocumentState document{token, asset(2), "scene.scene.txt", a::Provenance::HandAuthored, 2, false};
+  const auto legacy = overTheWire(codec::encode(document));
+  CHECK(legacy.asObject().size() == 7);
+  CHECK(codec::decodeDocumentState(legacy) == document);
+  document.environment = a::SceneEnvironmentChoice{};
+  const auto optedIn = overTheWire(codec::encode(document));
+  REQUIRE(optedIn.find("environment"));
+  CHECK(optedIn.find("environment")->isNull());
+  CHECK(codec::decodeDocumentState(optedIn) == document);
+
+  const a::SetSceneEnvironment set{token, {asset(4)}};
+  auto command = overTheWire(codec::encode(a::Command{set}));
+  auto decoded = codec::decodeAuthoringCommand(command);
+  REQUIRE(decoded);
+  CHECK(codec::encode(*decoded) == command);
+  command.set("extra", json::Value());
+  CHECK_FALSE(codec::decodeAuthoringCommand(command));
+
+  a::ApplyRecord failed{{a::ApplyId{entity(8).bytes}, 3}, a::ApplyState::Failed};
+  failed.error = a::ReloadError::RenderPreparationFailed;
+  failed.environmentDetail = a::SceneEnvironmentApplyDetail{set.choice, a::SceneEnvironmentFailure::BuildOpenRequired};
+  CHECK(codec::decodeApplyRecord(overTheWire(codec::encode(failed))) == failed);
+
+  c::RuntimeStatus status{false, 4, asset(2), 1};
+  status.sceneEnvironment = c::EffectiveSceneEnvironment{true, asset(4)};
+  CHECK(codec::decodeStatus(overTheWire(codec::encode(status))) == status);
+}

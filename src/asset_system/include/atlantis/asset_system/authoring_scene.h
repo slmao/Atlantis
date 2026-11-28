@@ -34,6 +34,7 @@ struct AuthoringNode {
 struct AuthoringScene {
   std::vector<AuthoringNode> nodes;
   std::optional<EntityGuid> activeCamera;
+  std::optional<AssetGuid> environment{};
   friend bool operator==(const AuthoringScene&, const AuthoringScene&) = default;
 };
 

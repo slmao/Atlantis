@@ -292,6 +292,9 @@ public enum AuthoringError
     InvalidGuardedRenderLook,
     RenderLookStaleDocument,
     RenderLookTargetChanged,
+    InvalidSceneEnvironment,
+    SceneEnvironmentStaleDocument,
+    SceneEnvironmentUnavailable,
 }
 
 /// <summary>
@@ -331,8 +334,13 @@ public enum PrefabEditError
     Unsupported, NoDocument, StaleDocument, StaleSource, InvalidInstance, LocalConflict, BaselineUnavailable, ReplayConflict,
 }
 public readonly record struct DocumentToken(EntityGuid DocumentId, ulong DocumentRevision);
+public readonly record struct SceneEnvironmentChoice(AssetGuid? Asset);
+public sealed record SetSceneEnvironment(DocumentToken ExpectedDocument, SceneEnvironmentChoice Choice) : Command;
 public sealed record DocumentState(DocumentToken Token, AssetGuid Scene, string Source, Provenance Provenance,
-    ulong LastPersistedRevision, bool Dirty);
+    ulong LastPersistedRevision, bool Dirty)
+{
+    public SceneEnvironmentChoice? Environment { get; init; }
+}
 public enum DocumentError
 {
     NoDocument, StaleDocument, ImportedSceneNotSavable, WriteFailed,
@@ -394,7 +402,12 @@ public enum ApplyState { Pending, Applied, Failed, Superseded }
 public enum ReloadError { ScenePreparationFailed, RenderPreparationFailed, RuntimeStopped }
 public enum ApplyLookupError { UnknownApply }
 public sealed record ApplyRecord(ApplyReceipt Receipt, ApplyState State, ulong? Generation = null,
-    ReloadError? Error = null, ApplyId? SupersededBy = null);
+    ReloadError? Error = null, ApplyId? SupersededBy = null)
+{
+    public SceneEnvironmentApplyDetail? EnvironmentDetail { get; init; }
+}
+public enum SceneEnvironmentFailure { Unavailable, BuildOpenRequired, PreparationFailed }
+public sealed record SceneEnvironmentApplyDetail(SceneEnvironmentChoice Requested, SceneEnvironmentFailure Reason);
 public sealed record ApplyProjection(ApplyReceipt Receipt, ulong Generation);
 /// <summary>Owned bounded observation. Projection is origin, not equality with disposable World writes.</summary>
 public sealed record ApplySnapshot(ulong? CurrentDocumentRevision, ApplyRecord? Request, ApplyProjection? Projection);

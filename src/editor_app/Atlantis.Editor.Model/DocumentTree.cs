@@ -550,10 +550,16 @@ public sealed class ApplyController
         if (record.State == ApplyState.Failed)
         {
             LastReloadError = record.Error; _stopped = record.Error == ReloadError.RuntimeStopped;
+            string reason = record.EnvironmentDetail is { } environment
+                ? $"Scene environment {environment.Requested.Asset?.ToString() ?? "Inherit"}. " +
+                    (environment.Reason == SceneEnvironmentFailure.BuildOpenRequired
+                        ? "Save, then use Saved Scenes Build/Open to activate this choice."
+                        : $"{environment.Reason}. Check the cooked environment before applying again.")
+                : record.Error.ToString()!;
             ObserveTask(TaskResult.Failed,
-                $"Runtime reload: {record.Error}. " + (record.Error == ReloadError.RuntimeStopped
+                $"Runtime reload: {reason} " + (record.Error == ReloadError.RuntimeStopped
                     ? "The Runtime stopped." : "The previous Runtime projection remains active."), error: record.Error);
-            Suspend(ApplyStatus.Failed, record.Error.ToString()!); return;
+            Suspend(ApplyStatus.Failed, reason); return;
         }
         if (record.State == ApplyState.Superseded)
         {

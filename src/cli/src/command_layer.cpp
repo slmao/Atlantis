@@ -325,8 +325,25 @@ Value applyRecordJson(const ac::ApplyRecord& record, bool flat = false) {
   out.set("state", Value::string(std::string(ac::toString(record.state))));
   if (record.generation) out.set("generation", Value::number(*record.generation));
   if (record.error) out.set("error", Value::string(std::string(ac::toString(*record.error))));
+  if (record.environmentDetail) {
+    const auto& detail = *record.environmentDetail;
+    auto json = Value::object();
+    json.set("requested", detail.requested.asset ? Value::string(asset_system::toString(*detail.requested.asset)) : Value());
+    json.set("reason", Value::string(std::string(ac::toString(detail.failure))));
+    out.set("environmentDetail", std::move(json));
+  }
   if (record.supersededBy) out.set("supersededBy", Value::string(ac::toString(*record.supersededBy)));
   return out;
+}
+std::string environmentApplyMessage(const ac::ApplyRecord& record) {
+  if (!record.environmentDetail) return {};
+  const auto& detail = *record.environmentDetail;
+  std::string text = " for scene environment " +
+      (detail.requested.asset ? asset_system::toString(*detail.requested.asset) : "Inherit") +
+      ": " + std::string(ac::toString(detail.failure));
+  if (detail.failure == ac::SceneEnvironmentFailure::BuildOpenRequired)
+    text += ". Save and activate it through independent Saved Scenes Build/Open.";
+  return text;
 }
 Value applySnapshotJson(const ac::ApplySnapshot& snapshot) {
   Value out = Value::object();
@@ -721,7 +738,7 @@ Reply CommandLayer::applyOutcome(const ac::ApplyReceipt& receipt) {
   const std::string why = record.state == ac::ApplyState::Failed ? std::string(ac::toString(*record.error))
       : "Superseded by " + ac::toString(*record.supersededBy);
   auto reply = failed("scene apply", plainError("Apply" + std::string(ac::toString(record.state)),
-      ErrorCategory::Runtime, "apply " + id + " " + why, result));
+      ErrorCategory::Runtime, "apply " + id + " " + why + environmentApplyMessage(record), result));
   reply.result = std::move(result); return reply;
 }
 std::optional<Reply> CommandLayer::deferredApplyOutcome() {
@@ -3242,6 +3259,86 @@ Reply CommandLayer::runScene(std::span<const std::string_view> t, std::string_vi
     result.set("camera", optionalEntityJson(camera.value()));
     return done(command, optionalEntityText(camera.value()) + "\n", std::move(result));
   }
+  if (verb == "environment") {
+    const auto usage = [&] {
+      return failed(command, usageError("scene environment [<inherit|asset-guid> <document-id> <revision>]"));
+    };
+    if (t.size() != 2 && t.size() != 5) return usage();
+    const auto effective = control_ ? control_->status().sceneEnvironment : std::nullopt;
+    if (control_ && !effective)
+      return failed(command, plainError("Unsupported", ErrorCategory::Refused, "the Runtime does not support scene environments"));
+    const auto query = a->documentStateWithEnvironment();
+    if (query.isErr()) {
+      using E = ac::DocumentError;
+      const auto code = query.error().error;
+      const auto category = code == E::TransportFailure || code == E::ProtocolFailure ? ErrorCategory::Connection
+                                                                                    : ErrorCategory::Refused;
+      return failed(command, plainError(std::string(ac::toString(code)), category, "cannot read scene environment"));
+    }
+    if (!query.value() || !query.value()->environment)
+      return failed(command, plainError("NoDocument", ErrorCategory::Refused, "there is no open scene environment"));
+    const auto& current = *query.value();
+    const auto assetText = [](const std::optional<ac::AssetGuid>& asset) {
+      return asset ? asset_system::toString(*asset) : std::string("inherit");
+    };
+    const auto encodeChoice = [](const std::optional<ac::AssetGuid>& asset) {
+      return asset ? Value::string(asset_system::toString(*asset)) : Value();
+    };
+    if (t.size() == 2) {
+      auto result = Value::object();
+      result.set("authored", encodeChoice(current.environment->asset));
+      result.set("documentId", Value::string(asset_system::toString(current.token.documentId)));
+      result.set("documentRevision", Value::number(current.token.documentRevision));
+      std::string human = "Document environment: " + assetText(current.environment->asset) + "\n";
+      if (effective) {
+        auto observed = Value::object();
+        observed.set("enabled", Value::boolean(effective->enabled));
+        observed.set("asset", encodeChoice(effective->asset));
+        result.set("effective", std::move(observed));
+        human += "Effective environment: " + (effective->enabled ? (effective->asset ? assetText(effective->asset)
+                                                                                     : "startup default") : "none") + "\n";
+      }
+      return done(command, std::move(human), std::move(result));
+    }
+    const auto document = asset_system::parseEntityGuid(t[3]);
+    std::uint64_t revision = 0;
+    const auto [end, error] = std::from_chars(t[4].data(), t[4].data() + t[4].size(), revision);
+    if (document.isErr() || error != std::errc{} || end != t[4].data() + t[4].size() || !revision) return usage();
+    ac::SceneEnvironmentChoice wanted;
+    if (t[2] != "inherit") {
+      const auto asset = asset_system::parseAssetGuid(t[2]);
+      if (asset.isErr()) return usage();
+      wanted.asset = asset.value();
+    }
+    const ac::DocumentToken expected{document.value(), revision};
+    if (current.token != expected)
+      return failed(command, refusedAuthoring(ac::Error::SceneEnvironmentStaleDocument, Value::object()));
+    (void)a->drainFailures();
+    const auto ticket = a->submitTransaction({ac::SetSceneEnvironment{expected, wanted}});
+    const auto unknown = [&](ErrorCategory category) {
+      return failed(command, plainError("SceneEnvironmentUnknown", category,
+          "Environment outcome unknown for " + assetText(wanted.asset) +
+          ". Check document and Apply status on the original Runtime before retrying."));
+    };
+    if (!ticket.first.value || ticket.count != 1) return unknown(ErrorCategory::Connection);
+    for (const auto& refusal : a->drainFailures()) {
+      if (refusal.ticket == ticket.first)
+        return failed(command, refusedAuthoring(refusal.error, Value::object()));
+    }
+    const auto after = a->documentStateWithEnvironment();
+    const bool changed = *current.environment != wanted;
+    if (after.isErr()) return unknown(ErrorCategory::Connection);
+    if (!after.value() || after.value()->token.documentId != expected.documentId ||
+        (changed && revision == std::numeric_limits<std::uint64_t>::max()) ||
+        after.value()->token.documentRevision != revision + (changed ? 1 : 0) || after.value()->environment != wanted)
+      return unknown(ErrorCategory::Runtime);
+    auto result = Value::object();
+    result.set("changed", Value::boolean(changed));
+    result.set("authored", encodeChoice(wanted.asset));
+    result.set("documentRevision", Value::number(after.value()->token.documentRevision));
+    return done(command, changed ? "Environment committed. Use scene apply and scene save explicitly.\n"
+                                  : "Environment unchanged.\n", std::move(result));
+  }
   if (verb == "apply") {
     if (t.size() != 2) return failed(command, usageError("scene apply"));
     (void)drainSceneEvents();
@@ -3291,7 +3388,7 @@ Reply CommandLayer::runScene(std::span<const std::string_view> t, std::string_vi
     const std::string state(ac::toString(record.state));
     std::string human = state + " apply " + ac::toString(record.receipt.id) + ", revision " + std::to_string(record.receipt.documentRevision);
     if (record.generation) human += ", generation " + std::to_string(*record.generation);
-    if (record.error) human += ": " + std::string(ac::toString(*record.error));
+    if (record.error) human += ": " + std::string(ac::toString(*record.error)) + environmentApplyMessage(record);
     if (record.supersededBy) human += " by " + ac::toString(*record.supersededBy);
     if (record.state == ac::ApplyState::Failed || record.state == ac::ApplyState::Superseded) {
       auto reply = failed(command, plainError("Apply" + state, ErrorCategory::Runtime, human, result));

@@ -130,6 +130,11 @@ public static partial class Codec
                 output.Set("kind", JsonValue.String("RequireTransformBatchRevision"))
                     .Set("expectedRevision", JsonValue.Number(c.ExpectedRevision));
                 break;
+            case A.SetSceneEnvironment c:
+                output.Set("kind", JsonValue.String("SetSceneEnvironment"))
+                    .Set("expectedDocument", Encode(c.ExpectedDocument))
+                    .Set("environment", EncodeEnvironmentChoice(c.Choice));
+                break;
             case A.SetActiveCamera c:
                 output.Set("kind", JsonValue.String("SetActiveCamera")).Set("camera", EncodeOptional(c.Camera));
                 break;
@@ -241,6 +246,11 @@ public static partial class Codec
             case "RequireTransformBatchRevision":
                 return value.Find("expectedRevision") is JsonValue transformGuard && DecodeUInt64(transformGuard) is ulong transformRevision
                     ? new A.RequireTransformBatchRevision(transformRevision) : null;
+            case "SetSceneEnvironment":
+                return Exact(value, 3) && value.Find("expectedDocument") is { } document && Exact(document, 2) &&
+                    DecodeDocumentToken(document) is { } expectedEnvironment && value.Find("environment") is { } choice &&
+                    DecodeEnvironmentChoice(choice) is { } environment
+                    ? new A.SetSceneEnvironment(expectedEnvironment, environment) : null;
             case "SetActiveCamera":
             {
                 (bool ok, EntityGuid? camera) = OptionalEntityMember(value, "camera");
@@ -518,9 +528,22 @@ public static partial class Codec
         return new(guid, number);
     }
 
+    private static JsonValue EncodeEnvironmentChoice(A.SceneEnvironmentChoice choice) =>
+        choice.Asset is { } asset ? Encode(asset) : JsonValue.Null();
+
+    private static A.SceneEnvironmentChoice? DecodeEnvironmentChoice(JsonValue value)
+    {
+        if (value.IsNull) return new A.SceneEnvironmentChoice(null);
+        return value.IsString && DecodeAsset(value) is AssetGuid { IsNil: false } asset && asset.ToString() == value.AsString
+            ? new A.SceneEnvironmentChoice(asset) : null;
+    }
+
     public static A.DocumentState? DecodeDocumentState(JsonValue value)
     {
-        if (!value.IsObject || value.Members.Count != 7 || DecodeDocumentToken(value) is not { } token ||
+        JsonValue? field = value.Find("environment");
+        A.SceneEnvironmentChoice? environment = field is null ? null : DecodeEnvironmentChoice(field);
+        if ((field is not null && environment is null) || !Exact(value, field is null ? 7 : 8) ||
+            DecodeDocumentToken(value) is not { } token ||
             value.Find("scene") is not { IsString: true } scene || DecodeAsset(scene) is not AssetGuid guid ||
             guid.IsNil || guid.ToString() != scene.AsString ||
             value.Find("source") is not { IsString: true } source || source.AsString.Length == 0 ||
@@ -530,8 +553,8 @@ public static partial class Codec
             (persisted == token.DocumentRevision && dirty.AsBool)) return null;
         return provenance.AsString switch
         {
-            "HandAuthored" => new(token, guid, source.AsString, A.Provenance.HandAuthored, persisted, dirty.AsBool),
-            "Imported" => new(token, guid, source.AsString, A.Provenance.Imported, persisted, dirty.AsBool),
+            "HandAuthored" => new(token, guid, source.AsString, A.Provenance.HandAuthored, persisted, dirty.AsBool) { Environment = environment },
+            "Imported" => new(token, guid, source.AsString, A.Provenance.Imported, persisted, dirty.AsBool) { Environment = environment },
             _ => null
         };
     }
@@ -765,6 +788,9 @@ public static partial class Codec
         JsonValue value = JsonValue.NewObject().Set("receipt", Encode(record.Receipt)).Set("state", JsonValue.String(record.State.ToString()));
         if (record.Generation is ulong gen) value.Set("generation", JsonValue.Number(gen));
         if (record.Error is A.ReloadError error) value.Set("error", JsonValue.String(error.ToString()));
+        if (record.EnvironmentDetail is { } detail)
+            value.Set("environmentDetail", JsonValue.NewObject()
+                .Set("requested", EncodeEnvironmentChoice(detail.Requested)).Set("reason", JsonValue.String(detail.Reason.ToString())));
         if (record.SupersededBy is A.ApplyId id) value.Set("supersededBy", JsonValue.String(id.ToString()));
         return value;
     }
@@ -789,7 +815,15 @@ public static partial class Codec
             if (by is not { IsString: true } || !A.ApplyId.TryParse(by.AsString, out A.ApplyId id) || id == decoded.Id) return null;
             successor = id;
         }
-        return new A.ApplyRecord(decoded, named, generation, refusal, successor);
+        A.SceneEnvironmentApplyDetail? environment = null;
+        if (value.Find("environmentDetail") is { } detail)
+        {
+            if (named != A.ApplyState.Failed || !Exact(detail, 2) || detail.Find("requested") is not { } requested ||
+                DecodeEnvironmentChoice(requested) is not { } choice || detail.Find("reason") is not { } reason ||
+                DecodeName<A.SceneEnvironmentFailure>(reason) is not { } failure) return null;
+            environment = new A.SceneEnvironmentApplyDetail(choice, failure);
+        }
+        return new A.ApplyRecord(decoded, named, generation, refusal, successor) { EnvironmentDetail = environment };
     }
     public static JsonValue Encode(A.ApplySnapshot snapshot) => JsonValue.NewObject()
         .Set("currentDocumentRevision", snapshot.CurrentDocumentRevision is ulong revision ? JsonValue.Number(revision) : JsonValue.Null())

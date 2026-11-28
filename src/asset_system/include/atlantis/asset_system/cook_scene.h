@@ -27,6 +27,10 @@ struct CookedScene {
   friend bool operator==(const CookedScene&, const CookedScene&) = default;
 };
 
+// Publish the result of the validated in-memory cook without rereading its source.
+[[nodiscard]] atlantis::Result<std::monostate, SceneCookError> writeCookedScene(
+    const CookedScene& cooked, const std::string& artifactOutputPath, const std::string& metadataOutputPath);
+
 // Plan 0015 Section D4: reads and validates the authoring source at
 // sourceFilePath, remaps node_id/parent/active-camera references to
 // dense array indices, encodes the runtime artifact and metadata
