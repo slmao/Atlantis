@@ -421,6 +421,10 @@ int main(int argc, char** argv) {
       atlantis::runtime::runningFromSceneDevelopmentBuild(ATLANTIS_RUNTIME_DEVELOPMENT_DIR))
     assets.enableProjectReads(ATLANTIS_RUNTIME_ASSETS_SOURCE_DIR);
   config.assetCatalogSnapshot = assets.catalog();
+  if (!config.assetCatalogSnapshot) {
+    ATLANTIS_LOG_ERROR("Runtime cannot initialize without the shared asset catalog snapshot");
+    return toProcessExitCode(RuntimeExitReason::InitializationFailed);
+  }
 
   auto appResult = createRuntimeApplication(config);
   if (appResult.isErr()) {
